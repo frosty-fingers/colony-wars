@@ -453,8 +453,10 @@
                 smartAI: true,
                 summoningSickness: true,
                 nestLayout: 'aligned',
+                winCondition: 'instant',
             });
             const [nestIndices, setNestIndices] = useState(NEST_LAYOUTS.aligned);
+            const [pendingCapture, setPendingCapture] = useState(null); // { winner, sinceTurn } -- for holdTurn mode
 
             const [map, setMap] = useState(() => generateMap(NEST_LAYOUTS.aligned.ant, NEST_LAYOUTS.aligned.rival));
             const mapRef = useRef(map);
@@ -1028,19 +1030,72 @@
                 proceedToEnemyTurn();
             }, [gameOver, phase, cardPlayedThisTurn, proceedToEnemyTurn, addLog]);
 
-            // Win check: capturing the enemy's Nest is the only way to win
+            // Win check: three testable modes -- instant capture, capture-and-hold, or annihilation
             useEffect(() => {
-                if (!map[nestIndices.rival] || !map[nestIndices.ant]) return;
-                if (map[nestIndices.rival].tribe.name === 'ANT') {
-                    addLog('=== YOU WIN — ENEMY NEST TAKEN ===');
-                    setGameOver(true);
-                    setWinner('ANT');
-                } else if (map[nestIndices.ant].tribe.name === 'RIVAL') {
-                    addLog('=== YOU LOSE — YOUR NEST WAS TAKEN ===');
-                    setGameOver(true);
-                    setWinner('RIVAL');
+                if (!map[nestIndices.rival] || !map[nestIndices.ant] || gameOver) return;
+
+                if (settings.winCondition === 'annihilation') {
+                    const rivalTiles = map.filter(t => t.tribe.name === 'RIVAL').length;
+                    const antTiles = map.filter(t => t.tribe.name === 'ANT').length;
+                    if (rivalTiles === 0) {
+                        addLog('=== YOU WIN — RIVAL FULLY WIPED OUT ===');
+                        setGameOver(true);
+                        setWinner('ANT');
+                    } else if (antTiles === 0) {
+                        addLog('=== YOU LOSE — YOUR COLONY WAS WIPED OUT ===');
+                        setGameOver(true);
+                        setWinner('RIVAL');
+                    }
+                    return;
                 }
-            }, [map, nestIndices, addLog]);
+
+                const antHoldsRivalNest = map[nestIndices.rival].tribe.name === 'ANT';
+                const rivalHoldsAntNest = map[nestIndices.ant].tribe.name === 'RIVAL';
+
+                if (settings.winCondition === 'instant') {
+                    if (antHoldsRivalNest) {
+                        addLog('=== YOU WIN — ENEMY NEST TAKEN ===');
+                        setGameOver(true);
+                        setWinner('ANT');
+                    } else if (rivalHoldsAntNest) {
+                        addLog('=== YOU LOSE — YOUR NEST WAS TAKEN ===');
+                        setGameOver(true);
+                        setWinner('RIVAL');
+                    }
+                    return;
+                }
+
+                // holdTurn mode: capturing starts a countdown -- the capturer must still hold
+                // the Nest once the turn counter has advanced (i.e. the other side had a full
+                // turn to try to take it back) before the win is confirmed.
+                if (antHoldsRivalNest) {
+                    if (!pendingCapture || pendingCapture.winner !== 'ANT') {
+                        setPendingCapture({ winner: 'ANT', sinceTurn: turn });
+                        addLog('> ⚡ Rival Nest captured! Hold it through their turn to win.');
+                    } else if (turn > pendingCapture.sinceTurn) {
+                        addLog('=== YOU WIN — HELD THE ENEMY NEST ===');
+                        setGameOver(true);
+                        setWinner('ANT');
+                    }
+                } else if (pendingCapture && pendingCapture.winner === 'ANT') {
+                    setPendingCapture(null);
+                    addLog('> Rival retook their nest! Hold broken.');
+                }
+
+                if (rivalHoldsAntNest) {
+                    if (!pendingCapture || pendingCapture.winner !== 'RIVAL') {
+                        setPendingCapture({ winner: 'RIVAL', sinceTurn: turn });
+                        addLog('> ⚠ Rival captured YOUR nest! Retake it or they win next turn.');
+                    } else if (turn > pendingCapture.sinceTurn) {
+                        addLog('=== YOU LOSE — RIVAL HELD YOUR NEST ===');
+                        setGameOver(true);
+                        setWinner('RIVAL');
+                    }
+                } else if (pendingCapture && pendingCapture.winner === 'RIVAL') {
+                    setPendingCapture(null);
+                    addLog('> You retook your nest! Crisis averted.');
+                }
+            }, [map, nestIndices, turn, settings.winCondition, gameOver, pendingCapture, addLog]);
 
             const resetGame = () => {
                 cardUid = 0;
@@ -1062,10 +1117,16 @@
                 setResourceCap(capForTurn(1));
                 setResources(capForTurn(1));
                 setTurn(1);
-                setGameLog(['=== COLONY WARS ===', 'Capture the enemy Nest to win.', 'Turn 1: card only -- no move (first-turn balance).']);
+                const winConditionMsg = settings.winCondition === 'annihilation'
+                    ? 'Wipe out every Rival tile to win.'
+                    : settings.winCondition === 'holdTurn'
+                        ? 'Capture the enemy Nest AND hold it through their turn to win.'
+                        : 'Capture the enemy Nest to win.';
+                setGameLog(['=== COLONY WARS ===', winConditionMsg, 'Turn 1: card only -- no move (first-turn balance).']);
                 setPhase('planning');
                 setGameOver(false);
                 setWinner(null);
+                setPendingCapture(null);
                 setHistory([]);
             };
 
@@ -1146,6 +1207,30 @@
                                 </div>
                             </div>
 
+                            <div className="settings-section">
+                                <div className="settings-title">Win Condition</div>
+                                <div className="settings-options">
+                                    <button
+                                        className={'control-btn' + (settings.winCondition === 'instant' ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, winCondition: 'instant' }))}
+                                    >
+                                        Instant Capture — taking the Nest wins immediately
+                                    </button>
+                                    <button
+                                        className={'control-btn' + (settings.winCondition === 'holdTurn' ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, winCondition: 'holdTurn' }))}
+                                    >
+                                        Capture &amp; Hold — must hold it through their next turn
+                                    </button>
+                                    <button
+                                        className={'control-btn' + (settings.winCondition === 'annihilation' ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, winCondition: 'annihilation' }))}
+                                    >
+                                        Annihilation — wipe out every enemy tile, Nest capture alone doesn't win
+                                    </button>
+                                </div>
+                            </div>
+
                             <button
                                 className="control-btn confirm"
                                 style={{ width: '100%', padding: '14px' }}
@@ -1175,8 +1260,20 @@
                     </div>
 
                     <div className="objective">
-                        🎯 Capture the RIVAL Nest (top) to win. Defend yours (bottom)!<br />
+                        {settings.winCondition === 'annihilation'
+                            ? '🎯 Wipe out every RIVAL tile to win. Nest capture alone won\'t end it!'
+                            : settings.winCondition === 'holdTurn'
+                                ? '🎯 Capture the RIVAL Nest AND hold it through their turn to win.'
+                                : '🎯 Capture the RIVAL Nest (top) to win. Defend yours (bottom)!'}
+                        <br />
                         1 card + 1 move/turn ⋅ leftover eggs 🥚 can be dumped for a bonus
+                        {pendingCapture && (
+                            <div style={{ marginTop: '4px', color: pendingCapture.winner === 'ANT' ? '#FFD700' : '#FF6B6B' }}>
+                                {pendingCapture.winner === 'ANT'
+                                    ? '⚡ Holding Rival Nest -- survive their turn to win!'
+                                    : '⚠ Rival holds YOUR Nest -- retake it now!'}
+                            </div>
+                        )}
                     </div>
 
                     <div className="board">
