@@ -247,6 +247,38 @@
 
         .info-text { font-size: 8px; color: #7DA832; text-align: center; }
 
+        .settings-section {
+            background: #071907;
+            border: 1px solid #1F4620;
+            border-radius: 2px;
+            padding: 8px;
+        }
+
+        .settings-title {
+            font-size: 9px;
+            font-weight: bold;
+            color: #FFD700;
+            margin-bottom: 6px;
+        }
+
+        .settings-options {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .settings-options .control-btn {
+            text-align: left;
+            font-size: 8px;
+            padding: 8px;
+        }
+
+        .control-btn.selected-setting {
+            background: #4A7A2A;
+            border: 2px solid #FFD700;
+            box-shadow: 0 0 6px #FFD700;
+        }
+
         /* Desktop: widen the window and put the log in a right-hand sidebar */
         @media (min-width: 680px) {
             #root { max-width: 720px; }
@@ -371,27 +403,54 @@
         // Simple, predictable cadence: at most 1 card play AND 1 move per turn by default.
         // Resources only gate which card you can afford, not how much you can do.
 
-        const ANT_NEST = 17;  // bottom row, middle column
-        const RIVAL_NEST = 2; // top row, middle column
+        // Two Nest layouts to test: aligned (straight-line rush is optimal) vs
+        // offset (forces at least one lateral move to reach the enemy Nest).
+        const NEST_LAYOUTS = {
+            aligned: { ant: 17, rival: 2, label: 'Aligned', desc: 'Nests share a column -- straight-line rush is the shortest path.' },
+            offset: { ant: 16, rival: 3, label: 'Offset', desc: 'Nests are diagonal from each other -- forces at least one lateral move.' },
+        };
 
-        const generateMap = () => {
+        const generateMap = (antNestIdx, rivalNestIdx) => {
             const map = [];
             for (let i = 0; i < TOTAL; i++) {
                 map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0, trait: null });
             }
-            map[RIVAL_NEST] = { id: RIVAL_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.RIVAL, units: 1, trait: null };
-            map[ANT_NEST] = { id: ANT_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null };
+            map[rivalNestIdx] = { id: rivalNestIdx, type: TERRITORY_TYPES.NEST, tribe: TRIBES.RIVAL, units: 1, trait: null };
+            map[antNestIdx] = { id: antNestIdx, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null };
             return map;
         };
 
         const adjacentToTribe = (map, i, tribeName) =>
             neighbors(i).some(n => map[n].tribe.name === tribeName);
 
+        // BFS distance from one tile to every other tile -- used by the smart-AI option
+        // to find the shortest hop count to the nearest tile matching a predicate.
+        const bfsDistances = (fromIdx) => {
+            const dist = new Array(TOTAL).fill(Infinity);
+            dist[fromIdx] = 0;
+            const queue = [fromIdx];
+            while (queue.length) {
+                const cur = queue.shift();
+                for (const n of neighbors(cur)) {
+                    if (dist[n] === Infinity) { dist[n] = dist[cur] + 1; queue.push(n); }
+                }
+            }
+            return dist;
+        };
+
         // Slow resource growth: +1 cap every OTHER turn, caps at 4 (plus any Worker bonus)
         const capForTurn = (turnNumber) => Math.min(1 + Math.floor((turnNumber - 1) / 2), 4);
 
         const ColonyWars = () => {
-            const [map, setMap] = useState(generateMap());
+            const [showSettings, setShowSettings] = useState(true);
+            const [settings, setSettings] = useState({
+                smartAI: true,
+                summoningSickness: true,
+                nestLayout: 'aligned',
+            });
+            const [nestIndices, setNestIndices] = useState(NEST_LAYOUTS.aligned);
+
+            const [map, setMap] = useState(() => generateMap(NEST_LAYOUTS.aligned.ant, NEST_LAYOUTS.aligned.rival));
             const mapRef = useRef(map);
             useEffect(() => { mapRef.current = map; }, [map]);
 
@@ -407,6 +466,7 @@
             const [dumpSource, setDumpSource] = useState(null);
             const [mustDiscard, setMustDiscard] = useState(false);
             const [cardPlayedThisTurn, setCardPlayedThisTurn] = useState(false);
+            const [summonedTileThisTurn, setSummonedTileThisTurn] = useState(null);
             const [bonusCapNextTurn, setBonusCapNextTurn] = useState(0);
             const [resourceCap, setResourceCap] = useState(capForTurn(1));
             const [resources, setResources] = useState(capForTurn(1));
@@ -497,12 +557,17 @@
                     addLog('> Elite rallies the colony! +1 move this turn.');
                 }
 
+                if (settings.summoningSickness) {
+                    setSummonedTileThisTurn(tileIdx);
+                    addLog('> 💤 Freshly summoned -- this tile can\'t move this turn.');
+                }
+
                 setResources(r => r - card.cost);
                 setCardPlayAvailable(false);
                 setCardPlayedThisTurn(true);
                 setHand(prev => prev.filter((_, i) => i !== cardIdx));
                 setSelectedCard(null);
-            }, [hand, map, resources, cardPlayAvailable, addLog, pushHistory]);
+            }, [hand, map, resources, cardPlayAvailable, settings.summoningSickness, addLog, pushHistory]);
 
             // ---- Player move / attack / split (accounts for fortified defense + warlord aura) ----
             const resolveMove = useCallback((sourceIdx, targetIdx) => {
@@ -563,8 +628,8 @@
                     pushHistory();
                     setMap(prev => {
                         const newMap = [...prev];
-                        const nest = newMap[ANT_NEST];
-                        newMap[ANT_NEST] = { ...nest, units: nest.units + resources };
+                        const nest = newMap[nestIndices.ant];
+                        newMap[nestIndices.ant] = { ...nest, units: nest.units + resources };
                         return newMap;
                     });
                     addLog(`> Surge Growth! Nest +${resources}.`);
@@ -586,7 +651,7 @@
                     setDumpMode('fortify-target');
                     addLog('> Turtle Up: tap a tile to fortify.');
                 }
-            }, [phase, gameOver, resources, playerProfile, addLog, pushHistory]);
+            }, [phase, gameOver, resources, playerProfile, nestIndices, addLog, pushHistory]);
 
             const resolveJump = useCallback((sourceIdx, targetIdx) => {
                 pushHistory();
@@ -702,6 +767,10 @@
                 if (moveSource === null) {
                     if (!moveAvailable) { addLog('> Already moved this turn!'); return; }
                     const tile = map[tileIdx];
+                    if (settings.summoningSickness && tileIdx === summonedTileThisTurn) {
+                        addLog('> 💤 This tile was just summoned to -- it can\'t move this turn.');
+                        return;
+                    }
                     if (tile.tribe.name === 'ANT' && tile.units > 0) {
                         setMoveSource(tileIdx);
                     } else {
@@ -722,7 +791,7 @@
                 }
 
                 resolveMove(moveSource, tileIdx);
-            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, playCard, resolveMove, resolveJump, resolveFortify, addLog]);
+            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, settings.summoningSickness, summonedTileThisTurn, playCard, resolveMove, resolveJump, resolveFortify, addLog]);
 
             // ---- Turn management ----
             const startPlayerTurn = useCallback((currentMap, turnNumber, capBonus) => {
@@ -747,6 +816,7 @@
                 setCardPlayAvailable(true);
                 setMoveAvailable(true);
                 setCardPlayedThisTurn(false);
+                setSummonedTileThisTurn(null);
                 setMustDiscard(false);
                 setHand(toppedHand);
                 setHistory([]); // undo only applies within the turn just starting
@@ -836,21 +906,54 @@
                         }
                     }
                     if (!moved) {
-                        for (const { t, i } of rivalTiles()) {
-                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
-                            if (target !== undefined) {
-                                const send = t.units;
-                                workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null };
-                                workMap[i] = { ...t, units: 0, trait: null };
-                                addLog('> Rival expanded territory!');
-                                break;
+                        if (settings.smartAI) {
+                            // Advance toward whichever Ant tile is closest to threatening our Nest,
+                            // instead of just grabbing the first empty tile found.
+                            const antTiles = workMap
+                                .map((t, i) => ({ t, i }))
+                                .filter(({ t }) => t.tribe.name === 'ANT');
+
+                            if (antTiles.length > 0) {
+                                const distToRivalNest = bfsDistances(nestIndices.rival);
+                                const threat = antTiles.sort((a, b) => distToRivalNest[a.i] - distToRivalNest[b.i])[0];
+                                const distToThreat = bfsDistances(threat.i);
+
+                                let bestExpand = null;
+                                for (const { t, i } of rivalTiles()) {
+                                    for (const n of neighbors(i)) {
+                                        if (workMap[n].tribe.name === 'NEUTRAL') {
+                                            const d = distToThreat[n];
+                                            if (!bestExpand || d < bestExpand.d) bestExpand = { i, target: n, d, units: t.units };
+                                        }
+                                    }
+                                }
+
+                                if (bestExpand) {
+                                    workMap[bestExpand.target] = { ...workMap[bestExpand.target], tribe: TRIBES.RIVAL, units: bestExpand.units, trait: null };
+                                    workMap[bestExpand.i] = { ...workMap[bestExpand.i], units: 0, trait: null };
+                                    addLog('> Rival advances toward your forces!');
+                                    moved = true;
+                                }
+                            }
+                        }
+
+                        if (!moved) {
+                            for (const { t, i } of rivalTiles()) {
+                                const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
+                                if (target !== undefined) {
+                                    const send = t.units;
+                                    workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null };
+                                    workMap[i] = { ...t, units: 0, trait: null };
+                                    addLog('> Rival expanded territory!');
+                                    break;
+                                }
                             }
                         }
                     }
 
                     finishRivalTurn(workMap, wResources);
                 }, 700);
-            }, [gameOver, turn, addLog, finishRivalTurn]);
+            }, [gameOver, turn, settings.smartAI, nestIndices, addLog, finishRivalTurn]);
 
             // Ref so onCardClick's discard branch can trigger the enemy turn without a stale closure
             const startEnemyTurnRef = useRef(proceedToEnemyTurn);
@@ -872,26 +975,30 @@
 
             // Win check: capturing the enemy's Nest is the only way to win
             useEffect(() => {
-                if (map[RIVAL_NEST].tribe.name === 'ANT') {
+                if (!map[nestIndices.rival] || !map[nestIndices.ant]) return;
+                if (map[nestIndices.rival].tribe.name === 'ANT') {
                     addLog('=== YOU WIN — ENEMY NEST TAKEN ===');
                     setGameOver(true);
                     setWinner('ANT');
-                } else if (map[ANT_NEST].tribe.name === 'RIVAL') {
+                } else if (map[nestIndices.ant].tribe.name === 'RIVAL') {
                     addLog('=== YOU LOSE — YOUR NEST WAS TAKEN ===');
                     setGameOver(true);
                     setWinner('RIVAL');
                 }
-            }, [map, addLog]);
+            }, [map, nestIndices, addLog]);
 
             const resetGame = () => {
                 cardUid = 0;
-                const freshMap = generateMap();
+                const layout = NEST_LAYOUTS[settings.nestLayout];
+                setNestIndices(layout);
+                const freshMap = generateMap(layout.ant, layout.rival);
                 setMap(freshMap);
                 setHand([drawCard(), drawCard(), drawCard()]);
                 setSelectedCard(null);
                 setMoveSource(null);
                 setDumpMode(null);
                 setDumpSource(null);
+                setSummonedTileThisTurn(null);
                 setMustDiscard(false);
                 setCardPlayAvailable(true);
                 setMoveAvailable(false); // first player doesn't get a move on turn 1
@@ -924,6 +1031,79 @@
                 }
                 return set;
             }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource]);
+
+            if (showSettings) {
+                return (
+                    <div className="game-container">
+                        <div className="main-col">
+                            <div className="header">
+                                <div className="header-col"><b>⚙ TEST SETTINGS</b></div>
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Rival AI Behavior</div>
+                                <div className="settings-options">
+                                    <button
+                                        className={'control-btn' + (settings.smartAI ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, smartAI: true }))}
+                                    >
+                                        Smart (advances on your push)
+                                    </button>
+                                    <button
+                                        className={'control-btn' + (!settings.smartAI ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, smartAI: false }))}
+                                    >
+                                        Original (expands blindly)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Summoning Sickness</div>
+                                <div className="settings-options">
+                                    <button
+                                        className={'control-btn' + (settings.summoningSickness ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, summoningSickness: true }))}
+                                    >
+                                        On (can't move a tile the turn it's summoned to)
+                                    </button>
+                                    <button
+                                        className={'control-btn' + (!settings.summoningSickness ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, summoningSickness: false }))}
+                                    >
+                                        Off (play + push same turn allowed)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Nest Layout</div>
+                                <div className="settings-options">
+                                    {Object.entries(NEST_LAYOUTS).map(([key, layout]) => (
+                                        <button
+                                            key={key}
+                                            className={'control-btn' + (settings.nestLayout === key ? ' selected-setting' : '')}
+                                            onClick={() => setSettings(s => ({ ...s, nestLayout: key }))}
+                                        >
+                                            {layout.label} — {layout.desc}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <button
+                                className="control-btn confirm"
+                                style={{ width: '100%', padding: '14px' }}
+                                onClick={() => { resetGame(); setShowSettings(false); }}
+                            >
+                                ▶ Start Game
+                            </button>
+
+                            <div className="info-text">Change these any time from the game-over screen.</div>
+                        </div>
+                    </div>
+                );
+            }
 
             return (
                 <div className="game-container">
@@ -966,6 +1146,7 @@
                                             <div className="t-type">{territory.type === TERRITORY_TYPES.NEST ? `${NEST_EMOJI} NEST` : 'GRD'}</div>
                                             {territory.units > 0 && <div className="t-units">{territory.units}</div>}
                                             {territory.trait && <div className="t-trait">{TRAIT_ICON[territory.trait]}</div>}
+                                            {settings.summoningSickness && idx === summonedTileThisTurn && <div className="t-trait">💤</div>}
                                         </div>
                                     );
                                 })}
@@ -1065,7 +1246,8 @@
                                     ? `${TRIBE_CONFIGS[PLAYER_TRIBE_KEY].emoji} VICTORY! ${TRIBE_CONFIGS[PLAYER_TRIBE_KEY].emoji}`
                                     : `${TRIBE_CONFIGS[RIVAL_TRIBE_KEY].emoji} DEFEAT ${TRIBE_CONFIGS[RIVAL_TRIBE_KEY].emoji}`}
                             </div>
-                            <button className="restart-btn" onClick={resetGame} style={{ marginTop: '6px' }}>Play Again</button>
+                            <button className="restart-btn" onClick={resetGame} style={{ marginTop: '6px' }}>Play Again (same settings)</button>
+                            <button className="restart-btn" onClick={() => setShowSettings(true)} style={{ marginTop: '6px' }}>⚙ Change Settings</button>
                         </div>
                     )}
 
