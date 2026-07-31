@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="Colony Wars">
@@ -17,11 +17,13 @@
             box-sizing: border-box;
             -webkit-user-select: none;
             user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
         }
 
         body {
             font-family: 'Courier New', monospace;
-            background: #0F380F;
+            background: #071907;
             color: #9BBC0F;
             padding: 10px;
             min-height: 100vh;
@@ -32,229 +34,174 @@
 
         #root {
             width: 100%;
-            max-width: 360px;
+            max-width: 380px;
         }
 
         .game-container {
             background: #0F380F;
             color: #9BBC0F;
-            padding: 12px;
+            padding: 10px;
             border: 6px solid #1F4620;
             border-radius: 4px;
-            font-size: 11px;
+            font-size: 10px;
             line-height: 1.3;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 7px;
             box-shadow: 0 0 20px rgba(0,0,0,0.9);
         }
 
         .header {
             border-bottom: 1px solid #9BBC0F;
-            padding-bottom: 6px;
-            font-size: 10px;
-        }
-
-        .turn-info {
-            font-weight: bold;
-            margin-bottom: 2px;
-        }
-
-        .resources {
+            padding-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
             font-size: 9px;
         }
 
+        .header-col { line-height: 1.5; }
+        .header-col b { color: #FFD700; }
+
         .board {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 4px;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 3px;
         }
 
         .territory {
             background: #1F4620;
             border: 1px solid #0F380F;
-            padding: 10px;
+            padding: 3px 2px;
             text-align: center;
             cursor: pointer;
-            min-height: 50px;
+            min-height: 40px;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             border-radius: 2px;
-            font-size: 9px;
             transition: all 0.1s;
-            -webkit-user-select: none;
-            user-select: none;
-            -webkit-touch-callout: none;
         }
 
-        .territory.selected {
-            background: #306230;
-            border: 2px solid #9BBC0F;
-            box-shadow: 0 0 4px #9BBC0F;
+        .territory.owned-target {
+            box-shadow: inset 0 0 0 1px #9BBC0F;
         }
 
-        .territory-icon {
-            font-size: 14px;
-            font-weight: bold;
-            margin-bottom: 2px;
+        .territory.valid-target {
+            box-shadow: inset 0 0 0 2px #FFD700;
+            background: #2A5A1A;
         }
 
-        .territory-type {
-            font-size: 7px;
-            color: #9BBC0F;
-            margin-bottom: 2px;
+        .territory.move-source {
+            background: #4A7A2A;
+            border: 2px solid #FFD700;
+            box-shadow: 0 0 6px #FFD700;
         }
 
-        .territory-units {
-            font-size: 10px;
-            font-weight: bold;
-        }
+        .t-icon { font-size: 12px; font-weight: bold; line-height: 1; }
+        .t-type { font-size: 6px; color: #7DA832; margin-top: 1px; }
+        .t-units { font-size: 9px; font-weight: bold; margin-top: 1px; }
 
         .log {
-            background: #0F380F;
+            background: #071907;
             border: 1px solid #9BBC0F;
-            padding: 8px;
+            padding: 6px;
             font-size: 8px;
-            min-height: 60px;
-            max-height: 100px;
+            height: 48px;
             overflow-y: auto;
             line-height: 1.4;
             border-radius: 2px;
         }
 
-        .log-line {
-            white-space: pre-wrap;
-            word-break: break-word;
-            margin-bottom: 2px;
+        .log-line { white-space: pre-wrap; word-break: break-word; }
+
+        .hand {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 5px;
         }
 
-        .controls {
+        .card {
+            background: #1F4620;
+            border: 1px solid #9BBC0F;
+            border-radius: 3px;
+            padding: 6px 3px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        .card.selected {
+            background: #4A7A2A;
+            border: 2px solid #FFD700;
+            box-shadow: 0 0 6px #FFD700;
+        }
+
+        .card.unaffordable {
+            opacity: 0.4;
+        }
+
+        .card-name { font-size: 8px; font-weight: bold; }
+        .card-stats { font-size: 7px; color: #FFD700; margin-top: 3px; }
+
+        .action-row {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: 1fr 1fr;
             gap: 6px;
-            font-size: 9px;
         }
 
         .control-btn {
             background: #1F4620;
             border: 1px solid #9BBC0F;
             color: #9BBC0F;
-            padding: 12px;
+            padding: 10px;
             text-align: center;
             cursor: pointer;
             border-radius: 2px;
             font-family: 'Courier New', monospace;
-            font-size: 10px;
+            font-size: 9px;
             font-weight: bold;
-            active-state: #306230;
             transition: all 0.1s;
         }
 
-        .control-btn:active {
-            background: #306230;
-            box-shadow: inset 0 0 4px #9BBC0F;
-        }
-
-        .dpad {
-            display: grid;
-            grid-template-columns: repeat(3, 40px);
-            gap: 2px;
-            justify-self: center;
-            margin-bottom: 4px;
-        }
-
-        .dpad-btn {
-            width: 40px;
-            height: 40px;
-            background: #1F4620;
-            border: 1px solid #9BBC0F;
-            color: #9BBC0F;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: bold;
-            border-radius: 2px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: monospace;
-            transition: all 0.1s;
-        }
-
-        .dpad-btn:active {
-            background: #306230;
-            box-shadow: inset 0 0 4px #9BBC0F;
-        }
-
-        .action-buttons {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 4px;
-        }
-
-        .end-turn {
-            grid-column: 1 / -1;
-        }
+        .control-btn:active { background: #306230; }
+        .control-btn:disabled { opacity: 0.4; }
 
         .game-over {
             background: #8B0000;
             color: #FFD700;
-            padding: 12px;
+            padding: 10px;
             text-align: center;
             font-weight: bold;
             border-radius: 2px;
-            margin-top: 8px;
         }
 
         .restart-btn {
             background: #1F4620;
             border: 1px solid #9BBC0F;
             color: #9BBC0F;
-            padding: 12px;
+            padding: 10px;
             text-align: center;
             cursor: pointer;
             border-radius: 2px;
             font-family: 'Courier New', monospace;
-            font-size: 10px;
+            font-size: 9px;
             font-weight: bold;
-            margin-top: 8px;
             width: 100%;
-        }
-
-        .restart-btn:active {
-            background: #306230;
         }
 
         .info-text {
             font-size: 8px;
-            color: #9BBC0F;
-            padding: 4px;
+            color: #7DA832;
             text-align: center;
-            margin-top: 4px;
         }
 
-        @media (max-width: 380px) {
-            .game-container {
-                padding: 8px;
-                gap: 6px;
-                border-width: 4px;
-            }
-
-            .territory {
-                min-height: 45px;
-                padding: 8px;
-            }
-
-            .control-btn {
-                padding: 10px;
-                font-size: 9px;
-            }
-
-            .dpad-btn {
-                width: 36px;
-                height: 36px;
-            }
+        .legend {
+            font-size: 7px;
+            color: #5A7A2A;
+            text-align: center;
+            border-top: 1px solid #1F4620;
+            padding-top: 4px;
         }
     </style>
 </head>
@@ -262,340 +209,464 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback } = React;
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        const ROWS = 4, COLS = 5, TOTAL = ROWS * COLS;
 
         const TRIBES = {
-            ANT: { name: 'ANT', color: '#8B4513', icon: 'A' },
+            ANT: { name: 'ANT', color: '#D2A679', icon: 'A' },
             WASP: { name: 'WASP', color: '#FFD700', icon: 'W' },
-            NEUTRAL: { name: 'NEUTRAL', color: '#808080', icon: '?' }
+            NEUTRAL: { name: 'NEUTRAL', color: '#6B7B6B', icon: '·' }
         };
 
-        const TERRITORY_TYPES = {
-            NEST: 'NEST',
-            FORAGE: 'FORAGE',
-            STRONGHOLD: 'STRONGHOLD',
+        const TERRITORY_TYPES = { NEST: 'NEST', FORAGE: 'FORAGE', GROUND: 'GROUND' };
+
+        const CARD_TYPES = [
+            { id: 'worker', name: 'WORKER', cost: 1, power: 2, weight: 0.5 },
+            { id: 'soldier', name: 'SOLDIER', cost: 2, power: 4, weight: 0.35 },
+            { id: 'elite', name: 'ELITE', cost: 4, power: 8, weight: 0.15 },
+        ];
+
+        let cardUid = 0;
+        const drawCard = () => {
+            const roll = Math.random();
+            let acc = 0;
+            let picked = CARD_TYPES[0];
+            for (const c of CARD_TYPES) {
+                acc += c.weight;
+                if (roll <= acc) { picked = c; break; }
+            }
+            cardUid += 1;
+            return { ...picked, uid: cardUid };
         };
+
+        const idxOf = (row, col) => row * COLS + col;
 
         const generateMap = () => {
             const map = [];
-            const types = [TERRITORY_TYPES.NEST, TERRITORY_TYPES.FORAGE, TERRITORY_TYPES.STRONGHOLD];
-            
-            for (let i = 0; i < 9; i++) {
-                map.push({
-                    id: i,
-                    type: types[i % 3],
-                    tribe: TRIBES.NEUTRAL,
-                    units: 0,
-                });
+            for (let i = 0; i < TOTAL; i++) {
+                map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0 });
             }
-            
-            map[0].tribe = TRIBES.ANT;
-            map[0].units = 2;
-            
-            map[8].tribe = TRIBES.WASP;
-            map[8].units = 3;
-            
+
+            // Neutral nests, contestable by both sides (grant bonus actions)
+            [idxOf(1, 2), idxOf(2, 2)].forEach(i => { map[i].type = TERRITORY_TYPES.NEST; });
+
+            // Forage tiles, scattered (grant resource cap bonus)
+            [idxOf(0, 2), idxOf(3, 2), idxOf(1, 4), idxOf(2, 0)].forEach(i => { map[i].type = TERRITORY_TYPES.FORAGE; });
+
+            // Player nest: bottom-left corner
+            const playerStart = idxOf(3, 0);
+            map[playerStart].type = TERRITORY_TYPES.NEST;
+            map[playerStart].tribe = TRIBES.ANT;
+            map[playerStart].units = 2;
+
+            // Enemy nest: top-right corner (opposite)
+            const enemyStart = idxOf(0, 4);
+            map[enemyStart].type = TERRITORY_TYPES.NEST;
+            map[enemyStart].tribe = TRIBES.WASP;
+            map[enemyStart].units = 2;
+
             return map;
         };
 
+        const isAdjacent = (a, b) => {
+            const rowA = Math.floor(a / COLS), colA = a % COLS;
+            const rowB = Math.floor(b / COLS), colB = b % COLS;
+            return (Math.abs(rowA - rowB) + Math.abs(colA - colB)) === 1;
+        };
+
+        const neighbors = (i) => {
+            const row = Math.floor(i / COLS), col = i % COLS;
+            const list = [];
+            if (row > 0) list.push(i - COLS);
+            if (row < ROWS - 1) list.push(i + COLS);
+            if (col > 0) list.push(i - 1);
+            if (col < COLS - 1) list.push(i + 1);
+            return list;
+        };
+
+        const adjacentToTribe = (map, i, tribeName) =>
+            neighbors(i).some(n => map[n].tribe.name === tribeName);
+
+        const countTiles = (map, tribeName, type) =>
+            map.filter(t => t.tribe.name === tribeName && (!type || t.type === type)).length;
+
         const ColonyWars = () => {
             const [map, setMap] = useState(generateMap());
-            const [selectedTerritory, setSelectedTerritory] = useState(0);
-            const [playerResources, setPlayerResources] = useState(5);
-            const [enemyResources, setEnemyResources] = useState(5);
+            const mapRef = useRef(map);
+            useEffect(() => { mapRef.current = map; }, [map]);
+            const [hand, setHand] = useState(() => [drawCard(), drawCard(), drawCard()]);
+            const [selectedCard, setSelectedCard] = useState(null);
+            const [moveSource, setMoveSource] = useState(null);
+            const [resourceCap, setResourceCap] = useState(1);
+            const [resources, setResources] = useState(1);
+            const [actionsTotal, setActionsTotal] = useState(2);
+            const [actionsLeft, setActionsLeft] = useState(2);
             const [turn, setTurn] = useState(1);
-            const [gameLog, setGameLog] = useState(['=== COLONY WARS ===', 'Ants vs Wasps. Begin!']);
+            const [gameLog, setGameLog] = useState(['=== COLONY WARS ===', 'Ants (bottom-left) vs Wasps (top-right).']);
             const [phase, setPhase] = useState('planning');
             const [gameOver, setGameOver] = useState(false);
             const [winner, setWinner] = useState(null);
 
-            const addLog = useCallback((message) => {
-                setGameLog(prev => {
-                    const newLog = [...prev, message];
-                    return newLog.slice(-6);
-                });
+            const addLog = useCallback((msg) => {
+                setGameLog(prev => [...prev, msg].slice(-6));
             }, []);
 
-            const deployUnit = useCallback(() => {
-                if (phase !== 'planning' || gameOver) return;
-                if (playerResources < 1) {
-                    addLog('> Not enough resources!');
+            // ---- Player card play ----
+            const playCard = useCallback((cardIdx, tileIdx) => {
+                const card = hand[cardIdx];
+                const tile = map[tileIdx];
+                if (!card) return;
+
+                if (actionsLeft < 1) { addLog('> No actions left this turn!'); return; }
+                if (resources < card.cost) { addLog(`> Need ${card.cost} resources for ${card.name}!`); return; }
+
+                const ownTile = tile.tribe.name === 'ANT';
+                const claimable = tile.tribe.name === 'NEUTRAL' && adjacentToTribe(map, tileIdx, 'ANT');
+
+                if (!ownTile && !claimable) {
+                    addLog('> Can only deploy on your land or open ground next to it!');
                     return;
                 }
 
                 setMap(prev => {
                     const newMap = [...prev];
-                    const territory = newMap[selectedTerritory];
-                    
-                    if (territory.tribe.name === 'ANT') {
-                        territory.units += 1;
-                        setPlayerResources(r => r - 1);
-                        addLog(`> Deployed ant unit`);
+                    const t = { ...newMap[tileIdx] };
+                    if (ownTile) {
+                        t.units += card.power;
+                        addLog(`> ${card.name} reinforces (${t.units} there now)`);
                     } else {
-                        addLog('> Cannot deploy there!');
-                        return prev;
+                        t.tribe = TRIBES.ANT;
+                        t.units = card.power;
+                        addLog(`> ${card.name} claims new ground!`);
                     }
-                    
+                    newMap[tileIdx] = t;
                     return newMap;
                 });
-            }, [playerResources, phase, gameOver, selectedTerritory, addLog]);
 
-            const attack = useCallback(() => {
-                if (phase !== 'planning' || gameOver) return;
-                if (playerResources < 1) {
-                    addLog('> Not enough resources!');
-                    return;
-                }
+                setResources(r => r - card.cost);
+                setActionsLeft(a => a - 1);
+                setHand(prev => {
+                    const next = [...prev];
+                    next[cardIdx] = drawCard();
+                    return next;
+                });
+                setSelectedCard(null);
+            }, [hand, map, actionsLeft, resources, addLog]);
 
-                const from = map[selectedTerritory];
-                
-                if (from.tribe.name !== 'ANT') {
-                    addLog('> Must attack from your land!');
-                    return;
-                }
+            // ---- Player move / attack ----
+            const resolveMove = useCallback((sourceIdx, targetIdx) => {
+                if (actionsLeft < 1) { addLog('> No actions left this turn!'); setMoveSource(null); return; }
+                if (!isAdjacent(sourceIdx, targetIdx)) { addLog('> Not adjacent!'); setMoveSource(null); return; }
 
-                if (from.units < 1) {
-                    addLog('> No units to attack with!');
-                    return;
-                }
+                const source = map[sourceIdx];
+                const target = map[targetIdx];
+                const movingUnits = source.units;
 
-                // Find adjacent enemy
-                const adjacent = [
-                    selectedTerritory - 3,
-                    selectedTerritory + 3,
-                    selectedTerritory - 1,
-                    selectedTerritory + 1
-                ].filter(id => id >= 0 && id < 9);
-
-                const target = adjacent.find(id => map[id].tribe.name === 'WASP');
-                
-                if (!target) {
-                    addLog('> No enemy adjacent!');
-                    return;
-                }
-
-                setPlayerResources(r => r - 1);
-                
-                const playerStr = from.units;
-                const enemyStr = map[target].units;
-                
                 setMap(prev => {
                     const newMap = [...prev];
-                    
-                    if (playerStr > enemyStr) {
-                        newMap[target].tribe = TRIBES.ANT;
-                        newMap[target].units = playerStr - enemyStr;
-                        addLog(`> Victory! Territory seized!`);
+                    if (target.tribe.name === 'ANT') {
+                        newMap[targetIdx] = { ...target, units: target.units + movingUnits };
+                        newMap[sourceIdx] = { ...source, units: 0 };
+                        addLog(`> Reinforced (${target.units + movingUnits} there now)`);
+                    } else if (target.tribe.name === 'NEUTRAL') {
+                        newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: movingUnits };
+                        newMap[sourceIdx] = { ...source, units: 0 };
+                        addLog('> Claimed new territory!');
                     } else {
-                        addLog('> Attack repelled!');
+                        const enemyStr = target.units;
+                        if (movingUnits > enemyStr) {
+                            newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: movingUnits - enemyStr };
+                            newMap[sourceIdx] = { ...source, units: 0 };
+                            addLog('> Victory! Territory conquered!');
+                        } else {
+                            newMap[sourceIdx] = { ...source, units: 0 };
+                            newMap[targetIdx] = { ...target, units: Math.max(enemyStr - movingUnits, 1) };
+                            addLog('> Attack failed. Units lost.');
+                        }
                     }
-                    
                     return newMap;
                 });
-            }, [map, playerResources, phase, gameOver, selectedTerritory, addLog]);
+
+                setActionsLeft(a => a - 1);
+                setMoveSource(null);
+            }, [map, actionsLeft, addLog]);
+
+            const onCardClick = useCallback((idx) => {
+                if (phase !== 'planning' || gameOver) return;
+                setMoveSource(null);
+                setSelectedCard(prev => (prev === idx ? null : idx));
+            }, [phase, gameOver]);
+
+            const onTileClick = useCallback((tileIdx) => {
+                if (phase !== 'planning' || gameOver) return;
+
+                if (selectedCard !== null) {
+                    playCard(selectedCard, tileIdx);
+                    return;
+                }
+
+                if (moveSource === null) {
+                    const tile = map[tileIdx];
+                    if (tile.tribe.name === 'ANT' && tile.units > 0) {
+                        setMoveSource(tileIdx);
+                    } else {
+                        addLog('> Tap a card to deploy, or your own unit stack to move it.');
+                    }
+                    return;
+                }
+
+                if (moveSource === tileIdx) {
+                    setMoveSource(null);
+                    addLog('> Move cancelled.');
+                    return;
+                }
+
+                resolveMove(moveSource, tileIdx);
+            }, [phase, gameOver, selectedCard, moveSource, map, playCard, resolveMove, addLog]);
+
+            // ---- Turn management ----
+            const startPlayerTurn = useCallback((currentMap, turnNumber) => {
+                const nests = countTiles(currentMap, 'ANT', TERRITORY_TYPES.NEST);
+                const forages = countTiles(currentMap, 'ANT', TERRITORY_TYPES.FORAGE);
+                const cap = Math.min(turnNumber, 5) + forages;
+                const actions = Math.max(nests, 1) + 1;
+
+                let newMap = currentMap;
+                if (nests > 0) {
+                    newMap = currentMap.map(t =>
+                        (t.tribe.name === 'ANT' && t.type === TERRITORY_TYPES.NEST)
+                            ? { ...t, units: t.units + 1 }
+                            : t
+                    );
+                    addLog(`> ${nests} nest(s) spawn free units`);
+                }
+
+                setMap(newMap);
+                setResourceCap(cap);
+                setResources(cap);
+                setActionsTotal(actions);
+                setActionsLeft(actions);
+                setHand([drawCard(), drawCard(), drawCard()]);
+                addLog(`> Turn ${turnNumber}: ${cap} resources, ${actions} actions`);
+            }, [addLog]);
 
             const handleEnemyTurn = useCallback(() => {
                 if (gameOver) return;
                 setPhase('enemy_turn');
+                setSelectedCard(null);
+                setMoveSource(null);
                 addLog('> Wasp turn...');
-                
-                setTimeout(() => {
-                    const antTerritories = map
-                        .map((t, i) => ({ territory: t, idx: i }))
-                        .filter(({territory}) => territory.tribe.name === 'ANT' && territory.units > 0);
-                    
-                    const waspTerritories = map
-                        .map((t, i) => ({ territory: t, idx: i }))
-                        .filter(({territory}) => territory.tribe.name === 'WASP' && territory.units > 0);
-                    
-                    if (antTerritories.length > 0 && waspTerritories.length > 0 && enemyResources > 0) {
-                        const target = antTerritories[0];
-                        const attacker = waspTerritories[0];
-                        
-                        const waspStr = attacker.territory.units;
-                        const antStr = target.territory.units;
-                        
-                        setMap(prev => {
-                            const newMap = [...prev];
-                            
-                            if (waspStr > antStr) {
-                                newMap[target.idx].tribe = TRIBES.WASP;
-                                newMap[target.idx].units = waspStr - antStr;
-                                addLog(`> Wasps attacked!`);
-                            } else {
-                                addLog('> Defense held!');
-                            }
-                            
-                            return newMap;
-                        });
-                        
-                        setEnemyResources(r => r - 1);
-                    }
-                    
-                    const antForages = map.filter(t => t.tribe.name === 'ANT' && t.type === TERRITORY_TYPES.FORAGE).length;
-                    const waspNests = map.filter(t => t.tribe.name === 'WASP' && t.type === TERRITORY_TYPES.NEST).length;
-                    
-                    setPlayerResources(r => r + Math.max(antForages, 1));
-                    setEnemyResources(r => r + Math.max(waspNests, 1));
-                    
-                    addLog('> Resources gained');
-                    setTurn(t => t + 1);
-                    setPhase('planning');
-                }, 600);
-            }, [map, enemyResources, gameOver, addLog]);
 
+                setTimeout(() => {
+                    let workMap = mapRef.current.map(t => ({ ...t }));
+
+                    const nests = countTiles(workMap, 'WASP', TERRITORY_TYPES.NEST);
+                    const forages = countTiles(workMap, 'WASP', TERRITORY_TYPES.FORAGE);
+                    let wResources = Math.min(turn, 5) + forages;
+                    let wActions = Math.max(nests, 1) + 1;
+
+                    // Free spawn
+                    workMap = workMap.map(t =>
+                        (t.tribe.name === 'WASP' && t.type === TERRITORY_TYPES.NEST)
+                            ? { ...t, units: t.units + 1 }
+                            : t
+                    );
+
+                    for (let a = 0; a < wActions; a++) {
+                        const waspTiles = workMap
+                            .map((t, i) => ({ t, i }))
+                            .filter(({ t }) => t.tribe.name === 'WASP' && t.units > 0);
+
+                        let acted = false;
+
+                        // Priority 1: attack a weaker adjacent ant tile
+                        for (const { t, i } of waspTiles) {
+                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
+                            if (target !== undefined) {
+                                const enemyStr = workMap[target].units;
+                                workMap[target] = { ...workMap[target], tribe: TRIBES.WASP, units: t.units - enemyStr };
+                                workMap[i] = { ...t, units: 0 };
+                                addLog('> Wasps attacked and won!');
+                                acted = true;
+                                break;
+                            }
+                        }
+                        if (acted) continue;
+
+                        // Priority 2: claim adjacent neutral tile
+                        for (const { t, i } of waspTiles) {
+                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
+                            if (target !== undefined) {
+                                workMap[target] = { ...workMap[target], tribe: TRIBES.WASP, units: t.units };
+                                workMap[i] = { ...t, units: 0 };
+                                addLog('> Wasps expanded territory!');
+                                acted = true;
+                                break;
+                            }
+                        }
+                        if (acted) continue;
+
+                        // Priority 3: spend resources reinforcing weakest nest
+                        if (wResources >= 1) {
+                            const weakest = workMap
+                                .map((t, i) => ({ t, i }))
+                                .filter(({ t }) => t.tribe.name === 'WASP')
+                                .sort((a, b) => a.t.units - b.t.units)[0];
+                            if (weakest) {
+                                const cost = wResources >= 2 ? 2 : 1;
+                                const power = cost === 2 ? 4 : 2;
+                                workMap[weakest.i] = { ...weakest.t, units: weakest.t.units + power };
+                                wResources -= cost;
+                                addLog('> Wasps reinforce their line.');
+                            }
+                        }
+                    }
+
+                    setMap(workMap);
+                    const nextTurn = turn + 1;
+                    setTurn(nextTurn);
+                    startPlayerTurn(workMap, nextTurn);
+                    setPhase('planning');
+                }, 700);
+            }, [gameOver, turn, addLog, startPlayerTurn]);
+
+            // Win check
             useEffect(() => {
-                const antCount = map.filter(t => t.tribe.name === 'ANT').length;
-                const waspCount = map.filter(t => t.tribe.name === 'WASP').length;
-                
-                if (antCount >= 6) {
+                const antCount = countTiles(map, 'ANT');
+                const waspCount = countTiles(map, 'WASP');
+                const majority = Math.ceil(TOTAL * 0.55);
+
+                if (antCount >= majority) {
                     addLog('=== YOU WIN ===');
                     setGameOver(true);
                     setWinner('ANT');
-                } else if (waspCount >= 6) {
+                } else if (waspCount >= majority) {
                     addLog('=== YOU LOSE ===');
                     setGameOver(true);
                     setWinner('WASP');
                 }
             }, [map, addLog]);
 
-            useEffect(() => {
-                const handleKeyPress = (e) => {
-                    const row = Math.floor(selectedTerritory / 3);
-                    const col = selectedTerritory % 3;
-                    
-                    switch(e.key) {
-                        case 'ArrowUp':
-                            e.preventDefault();
-                            if (row > 0) setSelectedTerritory(selectedTerritory - 3);
-                            break;
-                        case 'ArrowDown':
-                            e.preventDefault();
-                            if (row < 2) setSelectedTerritory(selectedTerritory + 3);
-                            break;
-                        case 'ArrowLeft':
-                            e.preventDefault();
-                            if (col > 0) setSelectedTerritory(selectedTerritory - 1);
-                            break;
-                        case 'ArrowRight':
-                            e.preventDefault();
-                            if (col < 2) setSelectedTerritory(selectedTerritory + 1);
-                            break;
-                        case 'z':
-                        case 'Z':
-                            deployUnit();
-                            break;
-                        case 'x':
-                        case 'X':
-                            attack();
-                            break;
-                        case 'Enter':
-                            if (phase === 'planning') handleEnemyTurn();
-                            break;
-                        default:
-                            break;
-                    }
-                };
-
-                window.addEventListener('keydown', handleKeyPress);
-                return () => window.removeEventListener('keydown', handleKeyPress);
-            }, [selectedTerritory, phase, deployUnit, attack, handleEnemyTurn]);
-
-            const moveCursor = (direction) => {
-                const row = Math.floor(selectedTerritory / 3);
-                const col = selectedTerritory % 3;
-                
-                switch(direction) {
-                    case 'up':
-                        if (row > 0) setSelectedTerritory(selectedTerritory - 3);
-                        break;
-                    case 'down':
-                        if (row < 2) setSelectedTerritory(selectedTerritory + 3);
-                        break;
-                    case 'left':
-                        if (col > 0) setSelectedTerritory(selectedTerritory - 1);
-                        break;
-                    case 'right':
-                        if (col < 2) setSelectedTerritory(selectedTerritory + 1);
-                        break;
-                    default:
-                        break;
-                }
-            };
-
             const resetGame = () => {
-                setMap(generateMap());
-                setSelectedTerritory(0);
-                setPlayerResources(5);
-                setEnemyResources(5);
+                cardUid = 0;
+                const freshMap = generateMap();
+                setMap(freshMap);
+                setHand([drawCard(), drawCard(), drawCard()]);
+                setSelectedCard(null);
+                setMoveSource(null);
+                setResourceCap(1);
+                setResources(1);
+                setActionsTotal(2);
+                setActionsLeft(2);
                 setTurn(1);
-                setGameLog(['=== COLONY WARS ===', 'Ants vs Wasps. Begin!']);
+                setGameLog(['=== COLONY WARS ===', 'Ants (bottom-left) vs Wasps (top-right).']);
                 setPhase('planning');
                 setGameOver(false);
                 setWinner(null);
             };
 
+            // Highlight valid deploy / move targets
+            const highlightSet = React.useMemo(() => {
+                const set = new Set();
+                if (selectedCard !== null) {
+                    map.forEach((t, i) => {
+                        if (t.tribe.name === 'ANT') set.add(i);
+                        else if (t.tribe.name === 'NEUTRAL' && adjacentToTribe(map, i, 'ANT')) set.add(i);
+                    });
+                } else if (moveSource !== null) {
+                    neighbors(moveSource).forEach(n => set.add(n));
+                }
+                return set;
+            }, [selectedCard, moveSource, map]);
+
             return (
                 <div className="game-container">
                     <div className="header">
-                        <div className="turn-info">TURN {turn} | {phase === 'enemy_turn' ? 'WASP' : 'YOUR'} TURN</div>
-                        <div className="resources">ANT: {playerResources} ◆ | WASP: {enemyResources} ◆</div>
+                        <div className="header-col">
+                            TURN <b>{turn}</b><br />
+                            {phase === 'enemy_turn' ? 'WASP TURN' : 'YOUR TURN'}
+                        </div>
+                        <div className="header-col" style={{ textAlign: 'right' }}>
+                            RES <b>{resources}</b>/{resourceCap} ◆<br />
+                            ACT <b>{actionsLeft}</b>/{actionsTotal} ⚡
+                        </div>
                     </div>
 
                     <div className="board">
                         {map.map((territory, idx) => (
                             <div
                                 key={idx}
-                                className={`territory ${idx === selectedTerritory ? 'selected' : ''}`}
-                                onClick={() => setSelectedTerritory(idx)}
+                                className={
+                                    'territory' +
+                                    (idx === moveSource ? ' move-source' : '') +
+                                    (highlightSet.has(idx) ? ' valid-target' : '')
+                                }
+                                onClick={() => onTileClick(idx)}
                                 style={{ color: territory.tribe.color }}
                             >
-                                <div className="territory-icon">{territory.tribe.icon}</div>
-                                <div className="territory-type">{territory.type.slice(0, 3)}</div>
-                                <div className="territory-units">×{territory.units}</div>
+                                <div className="t-icon">{territory.tribe.icon}</div>
+                                <div className="t-type">{territory.type.slice(0, 3)}</div>
+                                {territory.units > 0 && <div className="t-units">{territory.units}</div>}
                             </div>
                         ))}
                     </div>
 
                     <div className="log">
-                        {gameLog.map((line, i) => (
-                            <div key={i} className="log-line">{line}</div>
+                        {gameLog.map((line, i) => <div key={i} className="log-line">{line}</div>)}
+                    </div>
+
+                    <div className="hand">
+                        {hand.map((card, idx) => (
+                            <div
+                                key={card.uid}
+                                className={
+                                    'card' +
+                                    (selectedCard === idx ? ' selected' : '') +
+                                    (resources < card.cost ? ' unaffordable' : '')
+                                }
+                                onClick={() => onCardClick(idx)}
+                            >
+                                <div className="card-name">{card.name}</div>
+                                <div className="card-stats">{card.cost}◆ / {card.power}⚔</div>
+                            </div>
                         ))}
                     </div>
 
-                    <div className="controls">
-                        <div style={{ gridColumn: '1 / -1', textAlign: 'center' }}>
-                            <div className="dpad">
-                                <div></div>
-                                <button className="dpad-btn" onClick={() => moveCursor('up')}>▲</button>
-                                <div></div>
-                                <button className="dpad-btn" onClick={() => moveCursor('left')}>◀</button>
-                                <div></div>
-                                <button className="dpad-btn" onClick={() => moveCursor('right')}>▶</button>
-                                <div></div>
-                                <button className="dpad-btn" onClick={() => moveCursor('down')}>▼</button>
-                                <div></div>
-                            </div>
-                        </div>
-
-                        <div className="action-buttons">
-                            <button className="control-btn" onClick={deployUnit} disabled={gameOver}>Deploy (Z)</button>
-                            <button className="control-btn" onClick={attack} disabled={gameOver}>Attack (X)</button>
-                            <button className="control-btn end-turn" onClick={() => phase === 'planning' && handleEnemyTurn()} disabled={gameOver || phase !== 'planning'}>End Turn</button>
-                        </div>
+                    <div className="action-row">
+                        <button
+                            className="control-btn"
+                            onClick={() => { setSelectedCard(null); setMoveSource(null); }}
+                            disabled={gameOver || (selectedCard === null && moveSource === null)}
+                        >
+                            Cancel Selection
+                        </button>
+                        <button
+                            className="control-btn"
+                            onClick={() => phase === 'planning' && handleEnemyTurn()}
+                            disabled={gameOver || phase !== 'planning'}
+                        >
+                            End Turn
+                        </button>
                     </div>
 
                     {gameOver && (
                         <div>
-                            <div className="game-over">
-                                {winner === 'ANT' ? '🐜 VICTORY! 🐜' : '🐝 DEFEAT 🐝'}
-                            </div>
-                            <button className="restart-btn" onClick={resetGame}>Play Again</button>
+                            <div className="game-over">{winner === 'ANT' ? '🐜 VICTORY! 🐜' : '🐝 DEFEAT 🐝'}</div>
+                            <button className="restart-btn" onClick={resetGame} style={{ marginTop: '6px' }}>Play Again</button>
                         </div>
                     )}
 
                     <div className="info-text">
-                        Deploy units or attack enemies
+                        {selectedCard !== null
+                            ? 'Tap a highlighted tile to deploy this card.'
+                            : moveSource !== null
+                                ? 'Tap a highlighted neighbor to move/attack.'
+                                : 'Tap a card to play it, or your own units to move them.'}
+                    </div>
+
+                    <div className="legend">
+                        NEST: free unit/turn + extra action &nbsp;|&nbsp; FORAGE: +1 resource cap
                     </div>
                 </div>
             );
