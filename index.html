@@ -48,6 +48,13 @@
             box-shadow: 0 0 20px rgba(0,0,0,0.9);
         }
 
+        .main-col {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+        }
+
         .header {
             border-bottom: 1px solid #9BBC0F;
             padding-bottom: 5px;
@@ -133,6 +140,17 @@
             overflow-y: auto;
             line-height: 1.4;
             border-radius: 2px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .log-title {
+            font-size: 8px;
+            font-weight: bold;
+            color: #FFD700;
+            border-bottom: 1px solid #1F4620;
+            padding-bottom: 3px;
+            margin-bottom: 3px;
         }
 
         .log-line { white-space: pre-wrap; word-break: break-word; }
@@ -171,6 +189,10 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 6px;
+        }
+
+        .action-row.three-col {
+            grid-template-columns: 1fr 1fr 1fr;
         }
 
         .control-btn {
@@ -226,6 +248,31 @@
         }
 
         .info-text { font-size: 8px; color: #7DA832; text-align: center; }
+
+        /* Desktop: widen the window and put the log in a right-hand sidebar */
+        @media (min-width: 680px) {
+            #root { max-width: 720px; }
+
+            .game-container {
+                flex-direction: row;
+                align-items: stretch;
+                gap: 12px;
+            }
+
+            .main-col {
+                flex: 1;
+                min-width: 0;
+            }
+
+            .log {
+                width: 240px;
+                flex-shrink: 0;
+                height: auto;
+                min-height: 520px;
+                max-height: none;
+                align-self: stretch;
+            }
+        }
     </style>
 </head>
 <body>
@@ -259,6 +306,17 @@
         const neighbors = (i) => ADJACENCY[i] || [];
         const isAdjacent = (a, b) => neighbors(a).includes(b);
 
+        // Tiles reachable by "flying over" one adjacent tile -- used for the Wasp dump ability.
+        // Excludes the origin and anything already directly adjacent (that's just a normal move).
+        const jumpTargetsFrom = (idx) => {
+            const direct = new Set(neighbors(idx));
+            const twoAway = new Set();
+            direct.forEach(b => neighbors(b).forEach(c => {
+                if (c !== idx && !direct.has(c)) twoAway.add(c);
+            }));
+            return [...twoAway];
+        };
+
         const TRIBES = {
             ANT: { name: 'ANT', color: '#D2A679', icon: 'A' },
             RIVAL: { name: 'RIVAL', color: '#C0392B', icon: 'A' },
@@ -271,13 +329,19 @@
         // Basic matchup is ANT vs ANT (mirror match) for now. Swap PLAYER_TRIBE_KEY /
         // RIVAL_TRIBE_KEY to 'WASP' or 'BEETLE' later, or wire them to a picker.
         const TRIBE_CONFIGS = {
-            ANT: { spawnEvery: 1, spawnPower: 1 },
-            WASP: { spawnEvery: 2, spawnPower: 2 },
-            BEETLE: { spawnEvery: 3, spawnPower: 3 },
+            ANT: { spawnEvery: 1, spawnPower: 1, dumpType: 'generate', dumpLabel: 'Surge Growth' },
+            WASP: { spawnEvery: 2, spawnPower: 2, dumpType: 'jump', dumpLabel: 'Wing Jump', dumpCost: 2 },
+            BEETLE: { spawnEvery: 3, spawnPower: 3, dumpType: 'fortify', dumpLabel: 'Turtle Up', dumpCost: 2 },
         };
         const PLAYER_TRIBE_KEY = 'ANT';
         const RIVAL_TRIBE_KEY = 'ANT';
         const shouldSpawn = (profile, turnNumber) => turnNumber % profile.spawnEvery === 0;
+
+        const DUMP_DESCRIPTIONS = {
+            generate: 'Surge Growth: converts every unspent ◆ into bonus units at your Nest, right now.',
+            jump: 'Wing Jump: pay a flat cost to fly a unit stack over one adjacent tile and land two tiles away, skipping the middle tile entirely.',
+            fortify: 'Turtle Up: pay a flat cost to instantly fortify one of your tiles (+1 defense) without needing a Soldier card.',
+        };
 
         const TRAIT_ICON = { fortified: '🛡', warlord: '★' };
 
@@ -312,10 +376,10 @@
         const generateMap = () => {
             const map = [];
             for (let i = 0; i < TOTAL; i++) {
-                map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0, trait: null, sick: false });
+                map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0, trait: null });
             }
-            map[RIVAL_NEST] = { id: RIVAL_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.RIVAL, units: 1, trait: null, sick: false };
-            map[ANT_NEST] = { id: ANT_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null, sick: false };
+            map[RIVAL_NEST] = { id: RIVAL_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.RIVAL, units: 1, trait: null };
+            map[ANT_NEST] = { id: ANT_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null };
             return map;
         };
 
@@ -324,17 +388,6 @@
 
         // Slow resource growth: +1 cap every OTHER turn, caps at 4 (plus any Worker bonus)
         const capForTurn = (turnNumber) => Math.min(1 + Math.floor((turnNumber - 1) / 2), 4);
-
-        // Moving/attacking always leaves 1 unit behind as a garrison (unless it's your last unit).
-        // Splitting sends half forward and keeps half home instead.
-        const computeSplitAmounts = (sourceUnits, mode) => {
-            if (mode === 'split') {
-                const send = Math.max(Math.floor(sourceUnits / 2), 1);
-                return { send, remain: sourceUnits - send };
-            }
-            const send = sourceUnits > 1 ? sourceUnits - 1 : sourceUnits;
-            return { send, remain: sourceUnits - send };
-        };
 
         const ColonyWars = () => {
             const [map, setMap] = useState(generateMap());
@@ -347,9 +400,10 @@
 
             const [selectedCard, setSelectedCard] = useState(null);
             const [moveSource, setMoveSource] = useState(null);
-            const [moveTarget, setMoveTarget] = useState(null);
             const [cardPlayAvailable, setCardPlayAvailable] = useState(true);
             const [moveAvailable, setMoveAvailable] = useState(true);
+            const [dumpMode, setDumpMode] = useState(null); // null | 'jump-source' | 'jump-target' | 'fortify-target'
+            const [dumpSource, setDumpSource] = useState(null);
             const [mustDiscard, setMustDiscard] = useState(false);
             const [cardPlayedThisTurn, setCardPlayedThisTurn] = useState(false);
             const [bonusCapNextTurn, setBonusCapNextTurn] = useState(0);
@@ -360,10 +414,38 @@
             const [phase, setPhase] = useState('planning');
             const [gameOver, setGameOver] = useState(false);
             const [winner, setWinner] = useState(null);
+            const [history, setHistory] = useState([]); // undo stack, cleared each new turn
 
             const addLog = useCallback((msg) => {
-                setGameLog(prev => [...prev, msg].slice(-6));
+                setGameLog(prev => [...prev, msg].slice(-40));
             }, []);
+
+            // Snapshot everything an action could change, so it can be undone within this turn
+            const pushHistory = useCallback(() => {
+                setHistory(prev => [...prev, {
+                    map, hand, resources, cardPlayAvailable, moveAvailable, cardPlayedThisTurn, bonusCapNextTurn,
+                }]);
+            }, [map, hand, resources, cardPlayAvailable, moveAvailable, cardPlayedThisTurn, bonusCapNextTurn]);
+
+            const undo = useCallback(() => {
+                setHistory(prev => {
+                    if (prev.length === 0) return prev;
+                    const last = prev[prev.length - 1];
+                    setMap(last.map);
+                    setHand(last.hand);
+                    setResources(last.resources);
+                    setCardPlayAvailable(last.cardPlayAvailable);
+                    setMoveAvailable(last.moveAvailable);
+                    setCardPlayedThisTurn(last.cardPlayedThisTurn);
+                    setBonusCapNextTurn(last.bonusCapNextTurn);
+                    setSelectedCard(null);
+                    setMoveSource(null);
+                    setDumpMode(null);
+                    setDumpSource(null);
+                    addLog('> Undid last action.');
+                    return prev.slice(0, -1);
+                });
+            }, [addLog]);
 
             // ---- Player card play (mix of static traits + one-shot deploy effects) ----
             const playCard = useCallback((cardIdx, tileIdx) => {
@@ -382,6 +464,8 @@
                     return;
                 }
 
+                pushHistory();
+
                 setMap(prev => {
                     const newMap = prev.map(x => ({ ...x }));
                     const t = newMap[tileIdx];
@@ -395,7 +479,6 @@
                         t.trait = null;
                         addLog(`> ${card.name} claims new ground!`);
                     }
-                    t.sick = true; // freshly deployed/reinforced -- can't move from here this turn
 
                     if (card.staticTrait) {
                         t.trait = card.staticTrait;
@@ -420,7 +503,7 @@
 
                 if (card.id === 'elite') {
                     setMoveAvailable(true);
-                    addLog('> Elite rallies the colony! +1 move this turn (not from this tile, though).');
+                    addLog('> Elite rallies the colony! +1 move this turn.');
                 }
 
                 setResources(r => r - card.cost);
@@ -428,32 +511,29 @@
                 setCardPlayedThisTurn(true);
                 setHand(prev => prev.filter((_, i) => i !== cardIdx));
                 setSelectedCard(null);
-            }, [hand, map, resources, cardPlayAvailable, addLog]);
+            }, [hand, map, resources, cardPlayAvailable, addLog, pushHistory]);
 
             // ---- Player move / attack / split (accounts for fortified defense + warlord aura) ----
-            const resolveMove = useCallback((sourceIdx, targetIdx, mode) => {
-                if (!moveAvailable) { addLog('> Already moved this turn!'); setMoveSource(null); setMoveTarget(null); return; }
+            const resolveMove = useCallback((sourceIdx, targetIdx) => {
+                if (!moveAvailable) { addLog('> Already moved this turn!'); setMoveSource(null); return; }
+
+                pushHistory();
 
                 const source = map[sourceIdx];
                 const target = map[targetIdx];
-                const { send, remain } = computeSplitAmounts(source.units, mode);
+                const send = source.units;
 
                 setMap(prev => {
                     const newMap = [...prev];
-                    const sourceTrait = remain > 0 ? source.trait : null;
 
                     if (target.tribe.name === 'ANT') {
                         newMap[targetIdx] = { ...target, units: target.units + send };
-                        newMap[sourceIdx] = { ...source, units: remain, trait: sourceTrait };
-                        addLog(mode === 'split'
-                            ? `> Split! ${send} sent to reinforce, ${remain} stayed home.`
-                            : `> Reinforced (${target.units + send} there now)`);
+                        newMap[sourceIdx] = { ...source, units: 0, trait: null };
+                        addLog(`> Reinforced (${target.units + send} there now)`);
                     } else if (target.tribe.name === 'NEUTRAL') {
                         newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: send, trait: null };
-                        newMap[sourceIdx] = { ...source, units: remain, trait: sourceTrait };
-                        addLog(mode === 'split'
-                            ? `> Split! ${send} claimed new ground, ${remain} held the line.`
-                            : '> Claimed new territory!');
+                        newMap[sourceIdx] = { ...source, units: 0, trait: null };
+                        addLog('> Claimed new territory!');
                     } else {
                         const auraBonus = neighbors(sourceIdx).some(n =>
                             n !== targetIdx && prev[n].tribe.name === 'ANT' && prev[n].trait === 'warlord'
@@ -465,12 +545,12 @@
                         if (effSend > effDefense) {
                             const capturedNest = target.type === TERRITORY_TYPES.NEST;
                             newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: effSend - effDefense, trait: null };
-                            newMap[sourceIdx] = { ...source, units: remain, trait: sourceTrait };
+                            newMap[sourceIdx] = { ...source, units: 0, trait: null };
                             addLog(capturedNest
                                 ? '> ENEMY NEST CAPTURED!'
-                                : `> Victory! Territory conquered (${remain} held back).${auraBonus ? ' Warlord aura helped!' : ''}`);
+                                : `> Victory! Territory conquered.${auraBonus ? ' Warlord aura helped!' : ''}`);
                         } else {
-                            newMap[sourceIdx] = { ...source, units: remain, trait: sourceTrait };
+                            newMap[sourceIdx] = { ...source, units: 0, trait: null };
                             newMap[targetIdx] = { ...target, units: Math.max(effDefense - effSend, 1) };
                             addLog(`> Attack failed. Committed units lost.${defenderBonus ? ' Their fortification held!' : ''}`);
                         }
@@ -480,8 +560,96 @@
 
                 setMoveAvailable(false);
                 setMoveSource(null);
-                setMoveTarget(null);
-            }, [map, moveAvailable, addLog]);
+            }, [map, moveAvailable, addLog, pushHistory]);
+
+            const playerProfile = TRIBE_CONFIGS[PLAYER_TRIBE_KEY];
+
+            // ---- Resource dump: spend leftover resources on a tribe-specific bonus ----
+            const startDump = useCallback(() => {
+                if (phase !== 'planning' || gameOver) return;
+                if (playerProfile.dumpType === 'generate') {
+                    if (resources <= 0) { addLog('> No resources left to dump.'); return; }
+                    pushHistory();
+                    setMap(prev => {
+                        const newMap = [...prev];
+                        const nest = newMap[ANT_NEST];
+                        newMap[ANT_NEST] = { ...nest, units: nest.units + resources };
+                        return newMap;
+                    });
+                    addLog(`> Surge Growth! Nest +${resources}.`);
+                    setResources(0);
+                    return;
+                }
+                if (playerProfile.dumpType === 'jump') {
+                    if (resources < playerProfile.dumpCost) { addLog(`> Need ${playerProfile.dumpCost} resources for Wing Jump.`); return; }
+                    setSelectedCard(null);
+                    setMoveSource(null);
+                    setDumpMode('jump-source');
+                    addLog('> Wing Jump: tap a unit stack to launch from.');
+                    return;
+                }
+                if (playerProfile.dumpType === 'fortify') {
+                    if (resources < playerProfile.dumpCost) { addLog(`> Need ${playerProfile.dumpCost} resources for Turtle Up.`); return; }
+                    setSelectedCard(null);
+                    setMoveSource(null);
+                    setDumpMode('fortify-target');
+                    addLog('> Turtle Up: tap a tile to fortify.');
+                }
+            }, [phase, gameOver, resources, playerProfile, addLog, pushHistory]);
+
+            const resolveJump = useCallback((sourceIdx, targetIdx) => {
+                pushHistory();
+
+                const source = map[sourceIdx];
+                const target = map[targetIdx];
+                const send = source.units;
+
+                setMap(prev => {
+                    const newMap = [...prev];
+
+                    if (target.tribe.name === 'ANT') {
+                        newMap[targetIdx] = { ...target, units: target.units + send };
+                        newMap[sourceIdx] = { ...source, units: 0, trait: null };
+                        addLog(`> Wing Jump! Reinforced from afar (${target.units + send} there now).`);
+                    } else if (target.tribe.name === 'NEUTRAL') {
+                        newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: send, trait: null };
+                        newMap[sourceIdx] = { ...source, units: 0, trait: null };
+                        addLog('> Wing Jump! Claimed distant ground.');
+                    } else {
+                        const defenderBonus = target.trait === 'fortified' ? 1 : 0;
+                        const effDefense = target.units + defenderBonus;
+                        if (send > effDefense) {
+                            const capturedNest = target.type === TERRITORY_TYPES.NEST;
+                            newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: send - effDefense, trait: null };
+                            newMap[sourceIdx] = { ...source, units: 0, trait: null };
+                            addLog(capturedNest ? '> Wing Jump captures the ENEMY NEST!' : '> Wing Jump! Surprise attack wins!');
+                        } else {
+                            newMap[sourceIdx] = { ...source, units: 0, trait: null };
+                            newMap[targetIdx] = { ...target, units: Math.max(effDefense - send, 1) };
+                            addLog('> Wing Jump attack failed. Units lost.');
+                        }
+                    }
+                    return newMap;
+                });
+
+                setResources(r => r - playerProfile.dumpCost);
+                setDumpMode(null);
+                setDumpSource(null);
+            }, [map, playerProfile, addLog, pushHistory]);
+
+            const resolveFortify = useCallback((tileIdx) => {
+                const tile = map[tileIdx];
+                if (tile.tribe.name !== 'ANT') { addLog('> Can only fortify your own territory.'); return; }
+                pushHistory();
+                setMap(prev => {
+                    const newMap = [...prev];
+                    newMap[tileIdx] = { ...tile, trait: 'fortified' };
+                    return newMap;
+                });
+                addLog('> 🛡 Turtle Up! Tile fortified.');
+                setResources(r => r - playerProfile.dumpCost);
+                setDumpMode(null);
+            }, [map, playerProfile, addLog, pushHistory]);
 
             const onCardClick = useCallback((idx) => {
                 if (phase !== 'planning' || gameOver) return;
@@ -496,12 +664,43 @@
                 }
 
                 setMoveSource(null);
-                setMoveTarget(null);
                 setSelectedCard(prev => (prev === idx ? null : idx));
             }, [phase, gameOver, mustDiscard, hand, addLog]);
 
             const onTileClick = useCallback((tileIdx) => {
                 if (phase !== 'planning' || gameOver || mustDiscard) return;
+
+                if (dumpMode === 'jump-source') {
+                    const tile = map[tileIdx];
+                    if (tile.tribe.name !== 'ANT' || tile.units <= 0) {
+                        addLog('> Tap one of your own unit stacks to launch from.');
+                        return;
+                    }
+                    setDumpSource(tileIdx);
+                    setDumpMode('jump-target');
+                    return;
+                }
+
+                if (dumpMode === 'jump-target') {
+                    if (tileIdx === dumpSource) {
+                        setDumpMode(null);
+                        setDumpSource(null);
+                        addLog('> Wing Jump cancelled.');
+                        return;
+                    }
+                    const validTargets = jumpTargetsFrom(dumpSource);
+                    if (!validTargets.includes(tileIdx)) {
+                        addLog('> Too far or too close -- pick a valid jump landing spot.');
+                        return;
+                    }
+                    resolveJump(dumpSource, tileIdx);
+                    return;
+                }
+
+                if (dumpMode === 'fortify-target') {
+                    resolveFortify(tileIdx);
+                    return;
+                }
 
                 if (selectedCard !== null) {
                     playCard(selectedCard, tileIdx);
@@ -511,13 +710,8 @@
                 if (moveSource === null) {
                     if (!moveAvailable) { addLog('> Already moved this turn!'); return; }
                     const tile = map[tileIdx];
-                    if (tile.tribe.name === 'ANT' && tile.sick) {
-                        addLog('> 💤 Summoning sickness! Freshly deployed units can\'t move yet.');
-                        return;
-                    }
                     if (tile.tribe.name === 'ANT' && tile.units > 0) {
                         setMoveSource(tileIdx);
-                        setMoveTarget(null);
                     } else {
                         addLog('> Tap a card to deploy, or your own unit stack to move it.');
                     }
@@ -526,7 +720,6 @@
 
                 if (moveSource === tileIdx) {
                     setMoveSource(null);
-                    setMoveTarget(null);
                     addLog('> Move cancelled.');
                     return;
                 }
@@ -536,8 +729,8 @@
                     return;
                 }
 
-                setMoveTarget(tileIdx);
-            }, [phase, gameOver, mustDiscard, selectedCard, moveSource, moveAvailable, map, playCard, addLog]);
+                resolveMove(moveSource, tileIdx);
+            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, playCard, resolveMove, resolveJump, resolveFortify, addLog]);
 
             // ---- Turn management ----
             const startPlayerTurn = useCallback((currentMap, turnNumber, capBonus) => {
@@ -548,7 +741,7 @@
                 const newMap = currentMap.map(t => {
                     if (t.tribe.name !== 'ANT') return t;
                     const spawned = (t.type === TERRITORY_TYPES.NEST && spawnNow) ? t.units + playerProfile.spawnPower : t.units;
-                    return { ...t, units: spawned, sick: false }; // sickness clears at the start of your turn
+                    return { ...t, units: spawned };
                 });
                 if (spawnNow) addLog(`> Your nest spawns +${playerProfile.spawnPower} unit.`);
 
@@ -564,6 +757,7 @@
                 setCardPlayedThisTurn(false);
                 setMustDiscard(false);
                 setHand(toppedHand);
+                setHistory([]); // undo only applies within the turn just starting
                 addLog(`> Turn ${turnNumber}: ${cap} resources, 1 card + 1 move`);
             }, [addLog]);
 
@@ -572,13 +766,12 @@
                 setPhase('enemy_turn');
                 setSelectedCard(null);
                 setMoveSource(null);
-                setMoveTarget(null);
+                setDumpMode(null);
+                setDumpSource(null);
                 addLog('> Rival turn...');
 
                 setTimeout(() => {
                     let workMap = mapRef.current.map(t => ({ ...t }));
-                    // Sickness from their last reinforce clears at the start of their turn
-                    workMap = workMap.map(t => t.tribe.name === 'RIVAL' ? { ...t, sick: false } : t);
 
                     const rivalProfile = TRIBE_CONFIGS[RIVAL_TRIBE_KEY];
                     let wResources = capForTurn(turn);
@@ -595,19 +788,19 @@
 
                     const rivalTiles = () => workMap
                         .map((t, i) => ({ t, i }))
-                        .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0 && !t.sick);
+                        .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0);
 
                     // The "move": attack a weaker adjacent ant tile, else expand into open ground
                     let moved = false;
                     for (const { t, i } of rivalTiles()) {
                         const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
                         if (target !== undefined) {
-                            const { send, remain } = computeSplitAmounts(t.units, 'all');
+                            const send = t.units;
                             const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
                             const effDefense = workMap[target].units + defenderBonus;
                             const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
-                            workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null, sick: false };
-                            workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
+                            workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
+                            workMap[i] = { ...t, units: 0, trait: null };
                             addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
                             moved = true;
                             break;
@@ -617,9 +810,9 @@
                         for (const { t, i } of rivalTiles()) {
                             const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
                             if (target !== undefined) {
-                                const { send, remain } = computeSplitAmounts(t.units, 'all');
-                                workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null, sick: false };
-                                workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
+                                const send = t.units;
+                                workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null };
+                                workMap[i] = { ...t, units: 0, trait: null };
                                 addLog('> Rival expanded territory!');
                                 moved = true;
                                 break;
@@ -627,7 +820,7 @@
                         }
                     }
 
-                    // The "play": reinforce the weakest tile if resources allow (marks it sick)
+                    // The "play": reinforce the weakest tile if resources allow
                     const weakest = workMap
                         .map((t, i) => ({ t, i }))
                         .filter(({ t }) => t.tribe.name === 'RIVAL')
@@ -639,9 +832,18 @@
                             ...workMap[weakest.i],
                             units: workMap[weakest.i].units + power,
                             trait: cost === 2 ? 'fortified' : workMap[weakest.i].trait,
-                            sick: true,
                         };
                         addLog(cost === 2 ? '> Rival fortifies their line. 🛡' : '> Rival reinforces their line.');
+                        wResources -= cost;
+                    }
+
+                    // Leftover resources: tribe-specific dump (Ant profile auto-surges the Nest)
+                    if (wResources > 0 && rivalProfile.dumpType === 'generate') {
+                        const nestTile = workMap.find(t => t.tribe.name === 'RIVAL' && t.type === TERRITORY_TYPES.NEST);
+                        if (nestTile) {
+                            workMap[nestTile.id] = { ...nestTile, units: nestTile.units + wResources };
+                            addLog(`> Rival dumps leftover resources: nest +${wResources}!`);
+                        }
                     }
 
                     setMap(workMap);
@@ -662,7 +864,6 @@
                 if (!cardPlayedThisTurn) {
                     setSelectedCard(null);
                     setMoveSource(null);
-                    setMoveTarget(null);
                     setMustDiscard(true);
                     addLog('> Discard a card (tap one) to end your turn.');
                     return;
@@ -691,7 +892,8 @@
                 setHand([drawCard(), drawCard(), drawCard()]);
                 setSelectedCard(null);
                 setMoveSource(null);
-                setMoveTarget(null);
+                setDumpMode(null);
+                setDumpSource(null);
                 setMustDiscard(false);
                 setCardPlayAvailable(true);
                 setMoveAvailable(true);
@@ -704,28 +906,31 @@
                 setPhase('planning');
                 setGameOver(false);
                 setWinner(null);
+                setHistory([]);
             };
 
             const highlightSet = React.useMemo(() => {
                 const set = new Set();
                 if (mustDiscard) return set;
+                if (dumpMode === 'jump-target' && dumpSource !== null) {
+                    jumpTargetsFrom(dumpSource).forEach(n => set.add(n));
+                    return set;
+                }
+                if (dumpMode) return set;
                 if (selectedCard !== null) {
                     map.forEach((t, i) => {
                         if (t.tribe.name === 'ANT') set.add(i);
                         else if (t.tribe.name === 'NEUTRAL' && adjacentToTribe(map, i, 'ANT')) set.add(i);
                     });
-                } else if (moveSource !== null && moveTarget === null) {
+                } else if (moveSource !== null) {
                     neighbors(moveSource).forEach(n => set.add(n));
                 }
                 return set;
-            }, [selectedCard, moveSource, moveTarget, map, mustDiscard]);
-
-            const sourceUnitsForSplit = moveSource !== null ? map[moveSource].units : 0;
-            const splitPreview = computeSplitAmounts(sourceUnitsForSplit, 'split');
-            const allPreview = computeSplitAmounts(sourceUnitsForSplit, 'all');
+            }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource]);
 
             return (
                 <div className="game-container">
+                    <div className="main-col">
                     <div className="header">
                         <div className="header-col">
                             TURN <b>{turn}</b><br />
@@ -739,7 +944,7 @@
 
                     <div className="objective">
                         🎯 Capture the RIVAL Nest (top) to win. Defend yours (bottom)!<br />
-                        1 card + 1 move/turn ⋅ fresh units have summoning sickness 💤
+                        1 card + 1 move/turn ⋅ leftover ◆ can be dumped for a bonus
                     </div>
 
                     <div className="board">
@@ -753,8 +958,7 @@
                                             className={
                                                 'territory' +
                                                 (territory.type === TERRITORY_TYPES.NEST ? ' is-nest' : '') +
-                                                (idx === moveSource ? ' move-source' : '') +
-                                                (idx === moveTarget ? ' move-target' : '') +
+                                                (idx === moveSource || idx === dumpSource ? ' move-source' : '') +
                                                 (highlightSet.has(idx) ? ' valid-target' : '') +
                                                 (mustDiscard ? ' discard-mode' : '')
                                             }
@@ -765,16 +969,11 @@
                                             <div className="t-type">{territory.type === TERRITORY_TYPES.NEST ? 'NEST' : 'GRD'}</div>
                                             {territory.units > 0 && <div className="t-units">{territory.units}</div>}
                                             {territory.trait && <div className="t-trait">{TRAIT_ICON[territory.trait]}</div>}
-                                            {territory.sick && <div className="t-trait">💤</div>}
                                         </div>
                                     );
                                 })}
                             </div>
                         ))}
-                    </div>
-
-                    <div className="log">
-                        {gameLog.map((line, i) => <div key={i} className="log-line">{line}</div>)}
                     </div>
 
                     <div className="hand">
@@ -798,36 +997,68 @@
 
                     {mustDiscard ? (
                         <div className="discard-notice">⚠ Tap a card above to discard it and end your turn</div>
-                    ) : moveTarget !== null ? (
+                    ) : dumpMode === 'jump-source' ? (
                         <div className="action-row">
-                            <button className="control-btn confirm" onClick={() => resolveMove(moveSource, moveTarget, 'all')}>
-                                Send All ({allPreview.send}, keep {allPreview.remain})
+                            <div className="discard-notice" style={{ gridColumn: '1 / -1' }}>🐝 Tap a unit stack to launch Wing Jump from</div>
+                        </div>
+                    ) : dumpMode === 'jump-target' ? (
+                        <div className="action-row">
+                            <button className="control-btn" onClick={() => { setDumpMode(null); setDumpSource(null); }}>
+                                Cancel Jump
                             </button>
-                            <button
-                                className="control-btn confirm"
-                                onClick={() => resolveMove(moveSource, moveTarget, 'split')}
-                                disabled={sourceUnitsForSplit < 2}
-                            >
-                                Split Half ({splitPreview.send}/{splitPreview.remain})
+                            <div className="info-text" style={{ alignSelf: 'center' }}>Tap a glowing tile to land</div>
+                        </div>
+                    ) : dumpMode === 'fortify-target' ? (
+                        <div className="action-row">
+                            <button className="control-btn" onClick={() => setDumpMode(null)}>
+                                Cancel
                             </button>
+                            <div className="info-text" style={{ alignSelf: 'center' }}>Tap your tile to fortify</div>
                         </div>
                     ) : (
-                        <div className="action-row">
-                            <button
-                                className="control-btn"
-                                onClick={() => { setSelectedCard(null); setMoveSource(null); setMoveTarget(null); }}
-                                disabled={gameOver || (selectedCard === null && moveSource === null)}
-                            >
-                                Cancel Selection
-                            </button>
-                            <button
-                                className="control-btn"
-                                onClick={onEndTurnClick}
-                                disabled={gameOver || phase !== 'planning'}
-                            >
-                                End Turn
-                            </button>
-                        </div>
+                        <React.Fragment>
+                            {selectedCard === null && moveSource === null && (
+                                <button
+                                    className="control-btn confirm"
+                                    style={{ width: '100%' }}
+                                    onClick={startDump}
+                                    title={DUMP_DESCRIPTIONS[playerProfile.dumpType]}
+                                    disabled={
+                                        gameOver ||
+                                        (playerProfile.dumpType === 'generate' ? resources <= 0 : resources < playerProfile.dumpCost)
+                                    }
+                                >
+                                    ⚡ Dump: {playerProfile.dumpLabel} {playerProfile.dumpType === 'generate' ? `(+${resources})` : `(${playerProfile.dumpCost}◆)`}
+                                </button>
+                            )}
+                            {selectedCard === null && moveSource === null && (
+                                <div className="info-text" style={{ marginTop: '-4px' }}>{DUMP_DESCRIPTIONS[playerProfile.dumpType]}</div>
+                            )}
+                            <div className="action-row three-col">
+                                <button
+                                    className="control-btn"
+                                    onClick={undo}
+                                    disabled={gameOver || phase !== 'planning' || history.length === 0}
+                                    title="Undo your last card play or move this turn"
+                                >
+                                    ↩ Undo
+                                </button>
+                                <button
+                                    className="control-btn"
+                                    onClick={() => { setSelectedCard(null); setMoveSource(null); }}
+                                    disabled={gameOver || (selectedCard === null && moveSource === null)}
+                                >
+                                    Cancel Selection
+                                </button>
+                                <button
+                                    className="control-btn"
+                                    onClick={onEndTurnClick}
+                                    disabled={gameOver || phase !== 'planning'}
+                                >
+                                    End Turn
+                                </button>
+                            </div>
+                        </React.Fragment>
                     )}
 
                     {gameOver && (
@@ -842,11 +1073,15 @@
                             ? 'You must play or discard a card every turn.'
                             : selectedCard !== null
                                 ? 'Tap a highlighted tile to deploy this card.'
-                                : moveTarget !== null
-                                    ? 'Choose how much force to commit.'
-                                    : moveSource !== null
-                                        ? 'Tap a highlighted neighbor to move/attack.'
-                                        : 'Up to 1 card play and 1 move per turn. Play or discard a card each turn.'}
+                                : moveSource !== null
+                                    ? 'Tap a highlighted neighbor to move/attack there.'
+                                    : 'Up to 1 card play and 1 move per turn. Play or discard a card each turn.'}
+                    </div>
+                    </div>
+
+                    <div className="log">
+                        <div className="log-title">Battle Log</div>
+                        {gameLog.map((line, i) => <div key={i} className="log-line">{line}</div>)}
                     </div>
                 </div>
             );
