@@ -261,28 +261,33 @@
 
         const TRIBES = {
             ANT: { name: 'ANT', color: '#D2A679', icon: 'A' },
-            WASP: { name: 'WASP', color: '#FFD700', icon: 'W' },
+            RIVAL: { name: 'RIVAL', color: '#C0392B', icon: 'A' },
             NEUTRAL: { name: 'NEUTRAL', color: '#6B7B6B', icon: '·' }
         };
 
         const TERRITORY_TYPES = { NEST: 'NEST', GROUND: 'GROUND' };
 
-        // How often (in rounds) and how much each tribe's Nest spawns for free.
-        // BEETLE is reserved for a future third-faction mode.
+        // Preset library of tribe profiles (how often + how much a Nest spawns for free).
+        // Basic matchup is ANT vs ANT (mirror match) for now. Swap PLAYER_TRIBE_KEY /
+        // RIVAL_TRIBE_KEY to 'WASP' or 'BEETLE' later, or wire them to a picker.
         const TRIBE_CONFIGS = {
             ANT: { spawnEvery: 1, spawnPower: 1 },
             WASP: { spawnEvery: 2, spawnPower: 2 },
             BEETLE: { spawnEvery: 3, spawnPower: 3 },
         };
-        const shouldSpawn = (tribeName, turnNumber) => turnNumber % TRIBE_CONFIGS[tribeName].spawnEvery === 0;
+        const PLAYER_TRIBE_KEY = 'ANT';
+        const RIVAL_TRIBE_KEY = 'ANT';
+        const shouldSpawn = (profile, turnNumber) => turnNumber % profile.spawnEvery === 0;
 
         const TRAIT_ICON = { fortified: '🛡', warlord: '★' };
 
-        // Mix of static (persistent while garrisoned) and on-deploy (one-shot) effects
+        // Mix of static (persistent while garrisoned) and on-deploy (one-shot) effects.
+        // Some deploy effects grant extra actions (e.g. Elite) -- more of these can be
+        // added later without changing the base 1 card + 1 move rule.
         const CARD_TYPES = [
             { id: 'worker', name: 'WORKER', cost: 1, power: 2, weight: 0.5, staticTrait: null, effect: 'DEPLOY: +1 res next turn' },
             { id: 'soldier', name: 'SOLDIER', cost: 2, power: 3, weight: 0.35, staticTrait: 'fortified', effect: 'STATIC: +1 defense here 🛡' },
-            { id: 'elite', name: 'ELITE', cost: 4, power: 5, weight: 0.15, staticTrait: 'warlord', effect: 'DEPLOY:+1 adj | STATIC:+1 atk aura ★' },
+            { id: 'elite', name: 'ELITE', cost: 4, power: 5, weight: 0.15, staticTrait: 'warlord', effect: 'DEPLOY:+1 adj,+1 move | STATIC:+1 atk aura ★' },
         ];
 
         let cardUid = 0;
@@ -298,20 +303,19 @@
             return { ...picked, uid: cardUid };
         };
 
-        // Every action costs resources now -- cards cost their listed price,
-        // moving/attacking a stack costs a flat 1. More economy = more to do per turn.
-        const MOVE_COST = 1;
+        // Simple, predictable cadence: at most 1 card play AND 1 move per turn by default.
+        // Resources only gate which card you can afford, not how much you can do.
 
         const ANT_NEST = 16;
-        const WASP_NEST = 1;
+        const RIVAL_NEST = 1;
 
         const generateMap = () => {
             const map = [];
             for (let i = 0; i < TOTAL; i++) {
-                map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0, trait: null });
+                map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0, trait: null, sick: false });
             }
-            map[WASP_NEST] = { id: WASP_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.WASP, units: 1, trait: null };
-            map[ANT_NEST] = { id: ANT_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null };
+            map[RIVAL_NEST] = { id: RIVAL_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.RIVAL, units: 1, trait: null, sick: false };
+            map[ANT_NEST] = { id: ANT_NEST, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null, sick: false };
             return map;
         };
 
@@ -344,6 +348,8 @@
             const [selectedCard, setSelectedCard] = useState(null);
             const [moveSource, setMoveSource] = useState(null);
             const [moveTarget, setMoveTarget] = useState(null);
+            const [cardPlayAvailable, setCardPlayAvailable] = useState(true);
+            const [moveAvailable, setMoveAvailable] = useState(true);
             const [mustDiscard, setMustDiscard] = useState(false);
             const [cardPlayedThisTurn, setCardPlayedThisTurn] = useState(false);
             const [bonusCapNextTurn, setBonusCapNextTurn] = useState(0);
@@ -365,6 +371,7 @@
                 const tile = map[tileIdx];
                 if (!card) return;
 
+                if (!cardPlayAvailable) { addLog('> Already played a card this turn!'); return; }
                 if (resources < card.cost) { addLog(`> Need ${card.cost} resources for ${card.name}!`); return; }
 
                 const ownTile = tile.tribe.name === 'ANT';
@@ -388,6 +395,7 @@
                         t.trait = null;
                         addLog(`> ${card.name} claims new ground!`);
                     }
+                    t.sick = true; // freshly deployed/reinforced -- can't move from here this turn
 
                     if (card.staticTrait) {
                         t.trait = card.staticTrait;
@@ -410,15 +418,21 @@
                     addLog('> Industrious! +1 resource next turn.');
                 }
 
+                if (card.id === 'elite') {
+                    setMoveAvailable(true);
+                    addLog('> Elite rallies the colony! +1 move this turn (not from this tile, though).');
+                }
+
                 setResources(r => r - card.cost);
+                setCardPlayAvailable(false);
                 setCardPlayedThisTurn(true);
                 setHand(prev => prev.filter((_, i) => i !== cardIdx));
                 setSelectedCard(null);
-            }, [hand, map, resources, addLog]);
+            }, [hand, map, resources, cardPlayAvailable, addLog]);
 
             // ---- Player move / attack / split (accounts for fortified defense + warlord aura) ----
             const resolveMove = useCallback((sourceIdx, targetIdx, mode) => {
-                if (resources < MOVE_COST) { addLog(`> Need ${MOVE_COST} resource to move!`); setMoveSource(null); setMoveTarget(null); return; }
+                if (!moveAvailable) { addLog('> Already moved this turn!'); setMoveSource(null); setMoveTarget(null); return; }
 
                 const source = map[sourceIdx];
                 const target = map[targetIdx];
@@ -464,10 +478,10 @@
                     return newMap;
                 });
 
-                setResources(r => r - MOVE_COST);
+                setMoveAvailable(false);
                 setMoveSource(null);
                 setMoveTarget(null);
-            }, [map, resources, addLog]);
+            }, [map, moveAvailable, addLog]);
 
             const onCardClick = useCallback((idx) => {
                 if (phase !== 'planning' || gameOver) return;
@@ -495,7 +509,12 @@
                 }
 
                 if (moveSource === null) {
+                    if (!moveAvailable) { addLog('> Already moved this turn!'); return; }
                     const tile = map[tileIdx];
+                    if (tile.tribe.name === 'ANT' && tile.sick) {
+                        addLog('> 💤 Summoning sickness! Freshly deployed units can\'t move yet.');
+                        return;
+                    }
                     if (tile.tribe.name === 'ANT' && tile.units > 0) {
                         setMoveSource(tileIdx);
                         setMoveTarget(null);
@@ -518,19 +537,20 @@
                 }
 
                 setMoveTarget(tileIdx);
-            }, [phase, gameOver, mustDiscard, selectedCard, moveSource, map, playCard, addLog]);
+            }, [phase, gameOver, mustDiscard, selectedCard, moveSource, moveAvailable, map, playCard, addLog]);
 
             // ---- Turn management ----
             const startPlayerTurn = useCallback((currentMap, turnNumber, capBonus) => {
                 const cap = capForTurn(turnNumber) + capBonus;
-                const spawnNow = shouldSpawn('ANT', turnNumber);
+                const playerProfile = TRIBE_CONFIGS[PLAYER_TRIBE_KEY];
+                const spawnNow = shouldSpawn(playerProfile, turnNumber);
 
-                const newMap = currentMap.map(t =>
-                    (t.tribe.name === 'ANT' && t.type === TERRITORY_TYPES.NEST && spawnNow)
-                        ? { ...t, units: t.units + TRIBE_CONFIGS.ANT.spawnPower }
-                        : t
-                );
-                if (spawnNow) addLog(`> Your nest spawns +${TRIBE_CONFIGS.ANT.spawnPower} unit.`);
+                const newMap = currentMap.map(t => {
+                    if (t.tribe.name !== 'ANT') return t;
+                    const spawned = (t.type === TERRITORY_TYPES.NEST && spawnNow) ? t.units + playerProfile.spawnPower : t.units;
+                    return { ...t, units: spawned, sick: false }; // sickness clears at the start of your turn
+                });
+                if (spawnNow) addLog(`> Your nest spawns +${playerProfile.spawnPower} unit.`);
 
                 const toppedHand = [...handRef.current];
                 while (toppedHand.length < 3) toppedHand.push(drawCard());
@@ -539,10 +559,12 @@
                 setResourceCap(cap);
                 setResources(cap);
                 setBonusCapNextTurn(0);
+                setCardPlayAvailable(true);
+                setMoveAvailable(true);
                 setCardPlayedThisTurn(false);
                 setMustDiscard(false);
                 setHand(toppedHand);
-                addLog(`> Turn ${turnNumber}: ${cap} resources to spend`);
+                addLog(`> Turn ${turnNumber}: ${cap} resources, 1 card + 1 move`);
             }, [addLog]);
 
             const proceedToEnemyTurn = useCallback(() => {
@@ -551,80 +573,75 @@
                 setSelectedCard(null);
                 setMoveSource(null);
                 setMoveTarget(null);
-                addLog('> Wasp turn...');
+                addLog('> Rival turn...');
 
                 setTimeout(() => {
                     let workMap = mapRef.current.map(t => ({ ...t }));
+                    // Sickness from their last reinforce clears at the start of their turn
+                    workMap = workMap.map(t => t.tribe.name === 'RIVAL' ? { ...t, sick: false } : t);
+
+                    const rivalProfile = TRIBE_CONFIGS[RIVAL_TRIBE_KEY];
                     let wResources = capForTurn(turn);
-                    const spawnNow = shouldSpawn('WASP', turn);
+                    const spawnNow = shouldSpawn(rivalProfile, turn);
 
                     if (spawnNow) {
                         workMap = workMap.map(t =>
-                            (t.tribe.name === 'WASP' && t.type === TERRITORY_TYPES.NEST)
-                                ? { ...t, units: t.units + TRIBE_CONFIGS.WASP.spawnPower }
+                            (t.tribe.name === 'RIVAL' && t.type === TERRITORY_TYPES.NEST)
+                                ? { ...t, units: t.units + rivalProfile.spawnPower }
                                 : t
                         );
-                        addLog(`> Wasp nest surges! +${TRIBE_CONFIGS.WASP.spawnPower} units.`);
+                        addLog(`> Rival nest surges! +${rivalProfile.spawnPower} units.`);
                     }
 
-                    const waspTiles = () => workMap
+                    const rivalTiles = () => workMap
                         .map((t, i) => ({ t, i }))
-                        .filter(({ t }) => t.tribe.name === 'WASP' && t.units > 0);
+                        .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0 && !t.sick);
 
-                    let guard = 0;
-                    while (wResources >= MOVE_COST && guard < 10) {
-                        guard += 1;
-                        let acted = false;
-
-                        // Priority 1: attack a weaker adjacent ant tile
-                        for (const { t, i } of waspTiles()) {
-                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
-                            if (target !== undefined) {
-                                const { send, remain } = computeSplitAmounts(t.units, 'all');
-                                const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
-                                const effDefense = workMap[target].units + defenderBonus;
-                                const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
-                                workMap[target] = { ...workMap[target], tribe: TRIBES.WASP, units: Math.max(send - effDefense, 1), trait: null };
-                                workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
-                                addLog(capturedNest ? '> Wasps captured YOUR nest!' : `> Wasps attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
-                                wResources -= MOVE_COST;
-                                acted = true;
-                                break;
-                            }
+                    // The "move": attack a weaker adjacent ant tile, else expand into open ground
+                    let moved = false;
+                    for (const { t, i } of rivalTiles()) {
+                        const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
+                        if (target !== undefined) {
+                            const { send, remain } = computeSplitAmounts(t.units, 'all');
+                            const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
+                            const effDefense = workMap[target].units + defenderBonus;
+                            const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
+                            workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null, sick: false };
+                            workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
+                            addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
+                            moved = true;
+                            break;
                         }
-                        if (acted) continue;
-
-                        // Priority 2: claim adjacent neutral tile
-                        for (const { t, i } of waspTiles()) {
+                    }
+                    if (!moved) {
+                        for (const { t, i } of rivalTiles()) {
                             const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
                             if (target !== undefined) {
                                 const { send, remain } = computeSplitAmounts(t.units, 'all');
-                                workMap[target] = { ...workMap[target], tribe: TRIBES.WASP, units: send, trait: null };
+                                workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null, sick: false };
                                 workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
-                                addLog('> Wasps expanded territory!');
-                                wResources -= MOVE_COST;
-                                acted = true;
+                                addLog('> Rival expanded territory!');
+                                moved = true;
                                 break;
                             }
                         }
-                        if (acted) continue;
+                    }
 
-                        // Priority 3: spend remaining resources reinforcing the weakest tile
-                        const weakest = waspTiles().sort((a, b) => a.t.units - b.t.units)[0];
-                        if (weakest) {
-                            const cost = wResources >= 2 ? 2 : 1;
-                            const power = cost === 2 ? 3 : 2;
-                            workMap[weakest.i] = {
-                                ...workMap[weakest.i],
-                                units: workMap[weakest.i].units + power,
-                                trait: cost === 2 ? 'fortified' : workMap[weakest.i].trait,
-                            };
-                            addLog(cost === 2 ? '> Wasps fortify their line. 🛡' : '> Wasps reinforce their line.');
-                            wResources -= cost;
-                            acted = true;
-                        }
-
-                        if (!acted) break;
+                    // The "play": reinforce the weakest tile if resources allow (marks it sick)
+                    const weakest = workMap
+                        .map((t, i) => ({ t, i }))
+                        .filter(({ t }) => t.tribe.name === 'RIVAL')
+                        .sort((a, b) => a.t.units - b.t.units)[0];
+                    if (weakest && wResources >= 1) {
+                        const cost = wResources >= 2 ? 2 : 1;
+                        const power = cost === 2 ? 3 : 2;
+                        workMap[weakest.i] = {
+                            ...workMap[weakest.i],
+                            units: workMap[weakest.i].units + power,
+                            trait: cost === 2 ? 'fortified' : workMap[weakest.i].trait,
+                            sick: true,
+                        };
+                        addLog(cost === 2 ? '> Rival fortifies their line. 🛡' : '> Rival reinforces their line.');
                     }
 
                     setMap(workMap);
@@ -656,14 +673,14 @@
 
             // Win check: capturing the enemy's Nest is the only way to win
             useEffect(() => {
-                if (map[WASP_NEST].tribe.name === 'ANT') {
+                if (map[RIVAL_NEST].tribe.name === 'ANT') {
                     addLog('=== YOU WIN — ENEMY NEST TAKEN ===');
                     setGameOver(true);
                     setWinner('ANT');
-                } else if (map[ANT_NEST].tribe.name === 'WASP') {
+                } else if (map[ANT_NEST].tribe.name === 'RIVAL') {
                     addLog('=== YOU LOSE — YOUR NEST WAS TAKEN ===');
                     setGameOver(true);
-                    setWinner('WASP');
+                    setWinner('RIVAL');
                 }
             }, [map, addLog]);
 
@@ -676,6 +693,8 @@
                 setMoveSource(null);
                 setMoveTarget(null);
                 setMustDiscard(false);
+                setCardPlayAvailable(true);
+                setMoveAvailable(true);
                 setCardPlayedThisTurn(false);
                 setBonusCapNextTurn(0);
                 setResourceCap(capForTurn(1));
@@ -710,17 +729,17 @@
                     <div className="header">
                         <div className="header-col">
                             TURN <b>{turn}</b><br />
-                            {phase === 'enemy_turn' ? 'WASP TURN' : 'YOUR TURN'}
+                            {phase === 'enemy_turn' ? 'RIVAL TURN' : 'YOUR TURN'}
                         </div>
                         <div className="header-col" style={{ textAlign: 'right' }}>
                             RES <b>{resources}</b>/{resourceCap} ◆<br />
-                            Cards & moves both spend ◆
+                            CARD {cardPlayAvailable ? '✓' : '✗'} ⋅ MOVE {moveAvailable ? '✓' : '✗'}
                         </div>
                     </div>
 
                     <div className="objective">
-                        🎯 Capture the WASP Nest (top) to win. Defend yours (bottom)!<br />
-                        Move/attack costs {MOVE_COST}◆ ⋅ ANT nest +1/turn ⋅ WASP nest +2/2turns
+                        🎯 Capture the RIVAL Nest (top) to win. Defend yours (bottom)!<br />
+                        1 card + 1 move/turn ⋅ fresh units have summoning sickness 💤
                     </div>
 
                     <div className="board">
@@ -746,6 +765,7 @@
                                             <div className="t-type">{territory.type === TERRITORY_TYPES.NEST ? 'NEST' : 'GRD'}</div>
                                             {territory.units > 0 && <div className="t-units">{territory.units}</div>}
                                             {territory.trait && <div className="t-trait">{TRAIT_ICON[territory.trait]}</div>}
+                                            {territory.sick && <div className="t-trait">💤</div>}
                                         </div>
                                     );
                                 })}
@@ -765,7 +785,7 @@
                                     'card' +
                                     (selectedCard === idx ? ' selected' : '') +
                                     (mustDiscard ? ' discard-target' : '') +
-                                    (!mustDiscard && resources < card.cost ? ' unaffordable' : '')
+                                    (!mustDiscard && (resources < card.cost || !cardPlayAvailable) ? ' unaffordable' : '')
                                 }
                                 onClick={() => onCardClick(idx)}
                             >
@@ -812,7 +832,7 @@
 
                     {gameOver && (
                         <div>
-                            <div className="game-over">{winner === 'ANT' ? '🐜 VICTORY! 🐜' : '🐝 DEFEAT 🐝'}</div>
+                            <div className="game-over">{winner === 'ANT' ? '🐜 VICTORY! 🐜' : '🐜 DEFEAT 🐜'}</div>
                             <button className="restart-btn" onClick={resetGame} style={{ marginTop: '6px' }}>Play Again</button>
                         </div>
                     )}
@@ -826,7 +846,7 @@
                                     ? 'Choose how much force to commit.'
                                     : moveSource !== null
                                         ? 'Tap a highlighted neighbor to move/attack.'
-                                        : 'Spend resources on cards or moves, in any mix. Play or discard a card each turn.'}
+                                        : 'Up to 1 card play and 1 move per turn. Play or discard a card each turn.'}
                     </div>
                 </div>
             );
