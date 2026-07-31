@@ -828,19 +828,37 @@
                 const rivalProfile = TRIBE_CONFIGS[RIVAL_TRIBE_KEY];
                 const finalMap = workMap.map(t => ({ ...t }));
 
-                const weakest = finalMap
+                // Smart mode: reinforce whichever tile is actually under threat (a stronger Ant
+                // tile sits next door) -- biggest deficit first. Original mode always just
+                // reinforces the globally weakest Rival tile, threat or not.
+                const rivalTileList = finalMap
                     .map((t, i) => ({ t, i }))
-                    .filter(({ t }) => t.tribe.name === 'RIVAL')
-                    .sort((a, b) => a.t.units - b.t.units)[0];
-                if (weakest && wResources >= 1) {
+                    .filter(({ t }) => t.tribe.name === 'RIVAL');
+
+                const threatened = settings.smartAI
+                    ? rivalTileList
+                        .map(({ t, i }) => {
+                            const antNeighbors = neighbors(i).filter(n => finalMap[n].tribe.name === 'ANT');
+                            const biggestThreat = antNeighbors.reduce((max, n) => Math.max(max, finalMap[n].units), 0);
+                            return { t, i, deficit: biggestThreat - t.units };
+                        })
+                        .filter(x => x.deficit > 0)
+                        .sort((a, b) => b.deficit - a.deficit)[0]
+                    : null;
+
+                const reinforceTarget = threatened || rivalTileList.sort((a, b) => a.t.units - b.t.units)[0];
+
+                if (reinforceTarget && wResources >= 1) {
                     const cost = wResources >= 2 ? 2 : 1;
                     const power = cost === 2 ? 3 : 2;
-                    finalMap[weakest.i] = {
-                        ...finalMap[weakest.i],
-                        units: finalMap[weakest.i].units + power,
-                        trait: cost === 2 ? 'fortified' : finalMap[weakest.i].trait,
+                    finalMap[reinforceTarget.i] = {
+                        ...finalMap[reinforceTarget.i],
+                        units: finalMap[reinforceTarget.i].units + power,
+                        trait: cost === 2 ? 'fortified' : finalMap[reinforceTarget.i].trait,
                     };
-                    addLog(cost === 2 ? '> Rival fortifies their line. 🛡' : '> Rival reinforces their line.');
+                    addLog(threatened
+                        ? `> Rival stacks up to defend against your push! 🛡`
+                        : (cost === 2 ? '> Rival fortifies their line. 🛡' : '> Rival reinforces their line.'));
                     wResources -= cost;
                 }
 
@@ -857,7 +875,7 @@
                 setTurn(nextTurn);
                 startPlayerTurn(finalMap, nextTurn, bonusCapNextTurn);
                 setPhase('planning');
-            }, [turn, bonusCapNextTurn, addLog, startPlayerTurn]);
+            }, [turn, bonusCapNextTurn, settings.smartAI, addLog, startPlayerTurn]);
 
             const proceedToEnemyTurn = useCallback(() => {
                 if (gameOver) return;
@@ -888,21 +906,52 @@
                         .map((t, i) => ({ t, i }))
                         .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0);
 
-                    // The "move": attack a weaker adjacent ant tile, else expand into open ground.
-                    // Resolves immediately -- your only defense is repositioning with your own move.
+                    // The "move": attack, else expand. Resolves immediately -- your defense is
+                    // repositioning with your own move. Smart mode picks the most valuable
+                    // target we can beat (Nest first, then the biggest tower); original mode
+                    // just takes the first winnable attack it happens to find.
                     let moved = false;
-                    for (const { t, i } of rivalTiles()) {
-                        const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
-                        if (target !== undefined) {
-                            const send = t.units;
-                            const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
-                            const effDefense = workMap[target].units + defenderBonus;
-                            const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
-                            workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
-                            workMap[i] = { ...t, units: 0, trait: null };
-                            addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
+                    if (settings.smartAI) {
+                        const attackOptions = [];
+                        for (const { t, i } of rivalTiles()) {
+                            for (const n of neighbors(i)) {
+                                if (workMap[n].tribe.name !== 'ANT') continue;
+                                const defenderBonus = workMap[n].trait === 'fortified' ? 1 : 0;
+                                const effDefense = workMap[n].units + defenderBonus;
+                                if (t.units > effDefense) {
+                                    attackOptions.push({
+                                        attackerIdx: i, targetIdx: n, power: t.units, effDefense,
+                                        isNest: workMap[n].type === TERRITORY_TYPES.NEST,
+                                        defenderBonus,
+                                    });
+                                }
+                            }
+                        }
+                        if (attackOptions.length > 0) {
+                            attackOptions.sort((a, b) => {
+                                if (a.isNest !== b.isNest) return a.isNest ? -1 : 1; // Nest capture always wins priority
+                                return b.effDefense - a.effDefense; // otherwise, knock down the biggest tower first
+                            });
+                            const atk = attackOptions[0];
+                            workMap[atk.targetIdx] = { ...workMap[atk.targetIdx], tribe: TRIBES.RIVAL, units: Math.max(atk.power - atk.effDefense, 1), trait: null };
+                            workMap[atk.attackerIdx] = { ...workMap[atk.attackerIdx], units: 0, trait: null };
+                            addLog(atk.isNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${atk.defenderBonus ? ' (broke your fortification)' : ''}`);
                             moved = true;
-                            break;
+                        }
+                    } else {
+                        for (const { t, i } of rivalTiles()) {
+                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
+                            if (target !== undefined) {
+                                const send = t.units;
+                                const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
+                                const effDefense = workMap[target].units + defenderBonus;
+                                const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
+                                workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
+                                workMap[i] = { ...t, units: 0, trait: null };
+                                addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
+                                moved = true;
+                                break;
+                            }
                         }
                     }
                     if (!moved) {
