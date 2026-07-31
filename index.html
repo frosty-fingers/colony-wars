@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Colony Wars">
+    <title>Colony Wars</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0F380F;
+            color: #9BBC0F;
+            padding: 10px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #root {
+            width: 100%;
+            max-width: 360px;
+        }
+
+        .game-container {
+            background: #0F380F;
+            color: #9BBC0F;
+            padding: 12px;
+            border: 6px solid #1F4620;
+            border-radius: 4px;
+            font-size: 11px;
+            line-height: 1.3;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.9);
+        }
+
+        .header {
+            border-bottom: 1px solid #9BBC0F;
+            padding-bottom: 6px;
+            font-size: 10px;
+        }
+
+        .turn-info {
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+
+        .resources {
+            font-size: 9px;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
+        }
+
+        .territory {
+            background: #1F4620;
+            border: 1px solid #0F380F;
+            padding: 10px;
+            text-align: center;
+            cursor: pointer;
+            min-height: 50px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border-radius: 2px;
+            font-size: 9px;
+            transition: all 0.1s;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        .territory.selected {
+            background: #306230;
+            border: 2px solid #9BBC0F;
+            box-shadow: 0 0 4px #9BBC0F;
+        }
+
+        .territory-icon {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+
+        .territory-type {
+            font-size: 7px;
+            color: #9BBC0F;
+            margin-bottom: 2px;
+        }
+
+        .territory-units {
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        .log {
+            background: #0F380F;
+            border: 1px solid #9BBC0F;
+            padding: 8px;
+            font-size: 8px;
+            min-height: 60px;
+            max-height: 100px;
+            overflow-y: auto;
+            line-height: 1.4;
+            border-radius: 2px;
+        }
+
+        .log-line {
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-bottom: 2px;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+            font-size: 9px;
+        }
+
+        .control-btn {
+            background: #1F4620;
+            border: 1px solid #9BBC0F;
+            color: #9BBC0F;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 2px;
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            font-weight: bold;
+            active-state: #306230;
+            transition: all 0.1s;
+        }
+
+        .control-btn:active {
+            background: #306230;
+            box-shadow: inset 0 0 4px #9BBC0F;
+        }
+
+        .dpad {
+            display: grid;
+            grid-template-columns: repeat(3, 40px);
+            gap: 2px;
+            justify-self: center;
+            margin-bottom: 4px;
+        }
+
+        .dpad-btn {
+            width: 40px;
+            height: 40px;
+            background: #1F4620;
+            border: 1px solid #9BBC0F;
+            color: #9BBC0F;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: monospace;
+            transition: all 0.1s;
+        }
+
+        .dpad-btn:active {
+            background: #306230;
+            box-shadow: inset 0 0 4px #9BBC0F;
+        }
+
+        .action-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px;
+        }
+
+        .end-turn {
+            grid-column: 1 / -1;
+        }
+
+        .game-over {
+            background: #8B0000;
+            color: #FFD700;
+            padding: 12px;
+            text-align: center;
+            font-weight: bold;
+            border-radius: 2px;
+            margin-top: 8px;
+        }
+
+        .restart-btn {
+            background: #1F4620;
+            border: 1px solid #9BBC0F;
+            color: #9BBC0F;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 2px;
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            font-weight: bold;
+            margin-top: 8px;
+            width: 100%;
+        }
+
+        .restart-btn:active {
+            background: #306230;
+        }
+
+        .info-text {
+            font-size: 8px;
+            color: #9BBC0F;
+            padding: 4px;
+            text-align: center;
+            margin-top: 4px;
+        }
+
+        @media (max-width: 380px) {
+            .game-container {
+                padding: 8px;
+                gap: 6px;
+                border-width: 4px;
+            }
+
+            .territory {
+                min-height: 45px;
+                padding: 8px;
+            }
+
+            .control-btn {
+                padding: 10px;
+                font-size: 9px;
+            }
+
+            .dpad-btn {
+                width: 36px;
+                height: 36px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        const TRIBES = {
+            ANT: { name: 'ANT', color: '#8B4513', icon: 'A' },
+            WASP: { name: 'WASP', color: '#FFD700', icon: 'W' },
+            NEUTRAL: { name: 'NEUTRAL', color: '#808080', icon: '?' }
+        };
+
+        const TERRITORY_TYPES = {
+            NEST: 'NEST',
+            FORAGE: 'FORAGE',
+            STRONGHOLD: 'STRONGHOLD',
+        };
+
+        const generateMap = () => {
+            const map = [];
+            const types = [TERRITORY_TYPES.NEST, TERRITORY_TYPES.FORAGE, TERRITORY_TYPES.STRONGHOLD];
+            
+            for (let i = 0; i < 9; i++) {
+                map.push({
+                    id: i,
+                    type: types[i % 3],
+                    tribe: TRIBES.NEUTRAL,
+                    units: 0,
+                });
+            }
+            
+            map[0].tribe = TRIBES.ANT;
+            map[0].units = 2;
+            
+            map[8].tribe = TRIBES.WASP;
+            map[8].units = 3;
+            
+            return map;
+        };
+
+        const ColonyWars = () => {
+            const [map, setMap] = useState(generateMap());
+            const [selectedTerritory, setSelectedTerritory] = useState(0);
+            const [playerResources, setPlayerResources] = useState(5);
+            const [enemyResources, setEnemyResources] = useState(5);
+            const [turn, setTurn] = useState(1);
+            const [gameLog, setGameLog] = useState(['=== COLONY WARS ===', 'Ants vs Wasps. Begin!']);
+            const [phase, setPhase] = useState('planning');
+            const [gameOver, setGameOver] = useState(false);
+            const [winner, setWinner] = useState(null);
+
+            const addLog = useCallback((message) => {
+                setGameLog(prev => {
+                    const newLog = [...prev, message];
+                    return newLog.slice(-6);
+                });
+            }, []);
+
+            const deployUnit = useCallback(() => {
+                if (phase !== 'planning' || gameOver) return;
+                if (playerResources < 1) {
+                    addLog('> Not enough resources!');
+                    return;
+                }
+
+                setMap(prev => {
+                    const newMap = [...prev];
+                    const territory = newMap[selectedTerritory];
+                    
+                    if (territory.tribe.name === 'ANT') {
+                        territory.units += 1;
+                        setPlayerResources(r => r - 1);
+                        addLog(`> Deployed ant unit`);
+                    } else {
+                        addLog('> Cannot deploy there!');
+                        return prev;
+                    }
+                    
+                    return newMap;
+                });
+            }, [playerResources, phase, gameOver, selectedTerritory, addLog]);
+
+            const attack = useCallback(() => {
+                if (phase !== 'planning' || gameOver) return;
+                if (playerResources < 1) {
+                    addLog('> Not enough resources!');
+                    return;
+                }
+
+                const from = map[selectedTerritory];
+                
+                if (from.tribe.name !== 'ANT') {
+                    addLog('> Must attack from your land!');
+                    return;
+                }
+
+                if (from.units < 1) {
+                    addLog('> No units to attack with!');
+                    return;
+                }
+
+                // Find adjacent enemy
+                const adjacent = [
+                    selectedTerritory - 3,
+                    selectedTerritory + 3,
+                    selectedTerritory - 1,
+                    selectedTerritory + 1
+                ].filter(id => id >= 0 && id < 9);
+
+                const target = adjacent.find(id => map[id].tribe.name === 'WASP');
+                
+                if (!target) {
+                    addLog('> No enemy adjacent!');
+                    return;
+                }
+
+                setPlayerResources(r => r - 1);
+                
+                const playerStr = from.units;
+                const enemyStr = map[target].units;
+                
+                setMap(prev => {
+                    const newMap = [...prev];
+                    
+                    if (playerStr > enemyStr) {
+                        newMap[target].tribe = TRIBES.ANT;
+                        newMap[target].units = playerStr - enemyStr;
+                        addLog(`> Victory! Territory seized!`);
+                    } else {
+                        addLog('> Attack repelled!');
+                    }
+                    
+                    return newMap;
+                });
+            }, [map, playerResources, phase, gameOver, selectedTerritory, addLog]);
+
+            const handleEnemyTurn = useCallback(() => {
+                if (gameOver) return;
+                setPhase('enemy_turn');
+                addLog('> Wasp turn...');
+                
+                setTimeout(() => {
+                    const antTerritories = map
+                        .map((t, i) => ({ territory: t, idx: i }))
+                        .filter(({territory}) => territory.tribe.name === 'ANT' && territory.units > 0);
+                    
+                    const waspTerritories = map
+                        .map((t, i) => ({ territory: t, idx: i }))
+                        .filter(({territory}) => territory.tribe.name === 'WASP' && territory.units > 0);
+                    
+                    if (antTerritories.length > 0 && waspTerritories.length > 0 && enemyResources > 0) {
+                        const target = antTerritories[0];
+                        const attacker = waspTerritories[0];
+                        
+                        const waspStr = attacker.territory.units;
+                        const antStr = target.territory.units;
+                        
+                        setMap(prev => {
+                            const newMap = [...prev];
+                            
+                            if (waspStr > antStr) {
+                                newMap[target.idx].tribe = TRIBES.WASP;
+                                newMap[target.idx].units = waspStr - antStr;
+                                addLog(`> Wasps attacked!`);
+                            } else {
+                                addLog('> Defense held!');
+                            }
+                            
+                            return newMap;
+                        });
+                        
+                        setEnemyResources(r => r - 1);
+                    }
+                    
+                    const antForages = map.filter(t => t.tribe.name === 'ANT' && t.type === TERRITORY_TYPES.FORAGE).length;
+                    const waspNests = map.filter(t => t.tribe.name === 'WASP' && t.type === TERRITORY_TYPES.NEST).length;
+                    
+                    setPlayerResources(r => r + Math.max(antForages, 1));
+                    setEnemyResources(r => r + Math.max(waspNests, 1));
+                    
+                    addLog('> Resources gained');
+                    setTurn(t => t + 1);
+                    setPhase('planning');
+                }, 600);
+            }, [map, enemyResources, gameOver, addLog]);
+
+            useEffect(() => {
+                const antCount = map.filter(t => t.tribe.name === 'ANT').length;
+                const waspCount = map.filter(t => t.tribe.name === 'WASP').length;
+                
+                if (antCount >= 6) {
+                    addLog('=== YOU WIN ===');
+                    setGameOver(true);
+                    setWinner('ANT');
+                } else if (waspCount >= 6) {
+                    addLog('=== YOU LOSE ===');
+                    setGameOver(true);
+                    setWinner('WASP');
+                }
+            }, [map, addLog]);
+
+            useEffect(() => {
+                const handleKeyPress = (e) => {
+                    const row = Math.floor(selectedTerritory / 3);
+                    const col = selectedTerritory % 3;
+                    
+                    switch(e.key) {
+                        case 'ArrowUp':
+                            e.preventDefault();
+                            if (row > 0) setSelectedTerritory(selectedTerritory - 3);
+                            break;
+                        case 'ArrowDown':
+                            e.preventDefault();
+                            if (row < 2) setSelectedTerritory(selectedTerritory + 3);
+                            break;
+                        case 'ArrowLeft':
+                            e.preventDefault();
+                            if (col > 0) setSelectedTerritory(selectedTerritory - 1);
+                            break;
+                        case 'ArrowRight':
+                            e.preventDefault();
+                            if (col < 2) setSelectedTerritory(selectedTerritory + 1);
+                            break;
+                        case 'z':
+                        case 'Z':
+                            deployUnit();
+                            break;
+                        case 'x':
+                        case 'X':
+                            attack();
+                            break;
+                        case 'Enter':
+                            if (phase === 'planning') handleEnemyTurn();
+                            break;
+                        default:
+                            break;
+                    }
+                };
+
+                window.addEventListener('keydown', handleKeyPress);
+                return () => window.removeEventListener('keydown', handleKeyPress);
+            }, [selectedTerritory, phase, deployUnit, attack, handleEnemyTurn]);
+
+            const moveCursor = (direction) => {
+                const row = Math.floor(selectedTerritory / 3);
+                const col = selectedTerritory % 3;
+                
+                switch(direction) {
+                    case 'up':
+                        if (row > 0) setSelectedTerritory(selectedTerritory - 3);
+                        break;
+                    case 'down':
+                        if (row < 2) setSelectedTerritory(selectedTerritory + 3);
+                        break;
+                    case 'left':
+                        if (col > 0) setSelectedTerritory(selectedTerritory - 1);
+                        break;
+                    case 'right':
+                        if (col < 2) setSelectedTerritory(selectedTerritory + 1);
+                        break;
+                    default:
+                        break;
+                }
+            };
+
+            const resetGame = () => {
+                setMap(generateMap());
+                setSelectedTerritory(0);
+                setPlayerResources(5);
+                setEnemyResources(5);
+                setTurn(1);
+                setGameLog(['=== COLONY WARS ===', 'Ants vs Wasps. Begin!']);
+                setPhase('planning');
+                setGameOver(false);
+                setWinner(null);
+            };
+
+            return (
+                <div className="game-container">
+                    <div className="header">
+                        <div className="turn-info">TURN {turn} | {phase === 'enemy_turn' ? 'WASP' : 'YOUR'} TURN</div>
+                        <div className="resources">ANT: {playerResources} ◆ | WASP: {enemyResources} ◆</div>
+                    </div>
+
+                    <div className="board">
+                        {map.map((territory, idx) => (
+                            <div
+                                key={idx}
+                                className={`territory ${idx === selectedTerritory ? 'selected' : ''}`}
+                                onClick={() => setSelectedTerritory(idx)}
+                                style={{ color: territory.tribe.color }}
+                            >
+                                <div className="territory-icon">{territory.tribe.icon}</div>
+                                <div className="territory-type">{territory.type.slice(0, 3)}</div>
+                                <div className="territory-units">×{territory.units}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="log">
+                        {gameLog.map((line, i) => (
+                            <div key={i} className="log-line">{line}</div>
+                        ))}
+                    </div>
+
+                    <div className="controls">
+                        <div style={{ gridColumn: '1 / -1', textAlign: 'center' }}>
+                            <div className="dpad">
+                                <div></div>
+                                <button className="dpad-btn" onClick={() => moveCursor('up')}>▲</button>
+                                <div></div>
+                                <button className="dpad-btn" onClick={() => moveCursor('left')}>◀</button>
+                                <div></div>
+                                <button className="dpad-btn" onClick={() => moveCursor('right')}>▶</button>
+                                <div></div>
+                                <button className="dpad-btn" onClick={() => moveCursor('down')}>▼</button>
+                                <div></div>
+                            </div>
+                        </div>
+
+                        <div className="action-buttons">
+                            <button className="control-btn" onClick={deployUnit} disabled={gameOver}>Deploy (Z)</button>
+                            <button className="control-btn" onClick={attack} disabled={gameOver}>Attack (X)</button>
+                            <button className="control-btn end-turn" onClick={() => phase === 'planning' && handleEnemyTurn()} disabled={gameOver || phase !== 'planning'}>End Turn</button>
+                        </div>
+                    </div>
+
+                    {gameOver && (
+                        <div>
+                            <div className="game-over">
+                                {winner === 'ANT' ? '🐜 VICTORY! 🐜' : '🐝 DEFEAT 🐝'}
+                            </div>
+                            <button className="restart-btn" onClick={resetGame}>Play Again</button>
+                        </div>
+                    )}
+
+                    <div className="info-text">
+                        Deploy units or attack enemies
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ColonyWars />);
+    </script>
+</body>
+</html>
