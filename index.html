@@ -44,7 +44,7 @@
             line-height: 1.3;
             display: flex;
             flex-direction: column;
-            gap: 7px;
+            gap: 6px;
             box-shadow: 0 0 20px rgba(0,0,0,0.9);
         }
 
@@ -72,24 +72,24 @@
         .board {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 3px;
             align-items: center;
         }
 
         .board-row {
             display: flex;
-            gap: 4px;
+            gap: 3px;
             justify-content: center;
         }
 
         .territory {
             background: #1F4620;
             border: 1px solid #0F380F;
-            width: 68px;
-            padding: 4px 2px;
+            width: 64px;
+            padding: 3px 2px;
             text-align: center;
             cursor: pointer;
-            min-height: 48px;
+            min-height: 42px;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -234,24 +234,27 @@
     <script type="text/babel">
         const { useState, useEffect, useCallback, useRef } = React;
 
-        // ---- Diamond board: 3 / 4 / 4 / 3 tiles ----
+        // ---- Diamond board: 3 / 4 / 4 / 4 / 3 tiles ----
         //   0  1  2
         //  3  4  5  6
         //  7  8  9  10
-        //   11 12 13
-        const TOTAL = 14;
+        //  11 12 13 14
+        //   15 16 17
+        const TOTAL = 18;
         const ROW_LAYOUT = [
             [0, 1, 2],
             [3, 4, 5, 6],
             [7, 8, 9, 10],
-            [11, 12, 13],
+            [11, 12, 13, 14],
+            [15, 16, 17],
         ];
 
         const ADJACENCY = {
             0: [1, 3, 4], 1: [0, 2, 4, 5], 2: [1, 5, 6],
             3: [0, 4, 7], 4: [0, 1, 3, 5, 8], 5: [1, 2, 4, 6, 9], 6: [2, 5, 10],
-            7: [3, 8, 11], 8: [4, 7, 9, 11, 12], 9: [5, 8, 10, 12, 13], 10: [6, 9, 13],
-            11: [7, 8, 12], 12: [8, 9, 11, 13], 13: [9, 10, 12],
+            7: [3, 8, 11], 8: [4, 7, 9, 12], 9: [5, 8, 10, 13], 10: [6, 9, 14],
+            11: [7, 12, 15], 12: [8, 11, 13, 15, 16], 13: [9, 12, 14, 16, 17], 14: [10, 13, 17],
+            15: [11, 12, 16], 16: [12, 13, 15, 17], 17: [13, 14, 16],
         };
         const neighbors = (i) => ADJACENCY[i] || [];
         const isAdjacent = (a, b) => neighbors(a).includes(b);
@@ -295,7 +298,11 @@
             return { ...picked, uid: cardUid };
         };
 
-        const ANT_NEST = 12;
+        // Every action costs resources now -- cards cost their listed price,
+        // moving/attacking a stack costs a flat 1. More economy = more to do per turn.
+        const MOVE_COST = 1;
+
+        const ANT_NEST = 16;
         const WASP_NEST = 1;
 
         const generateMap = () => {
@@ -342,7 +349,6 @@
             const [bonusCapNextTurn, setBonusCapNextTurn] = useState(0);
             const [resourceCap, setResourceCap] = useState(capForTurn(1));
             const [resources, setResources] = useState(capForTurn(1));
-            const [actionsLeft, setActionsLeft] = useState(1);
             const [turn, setTurn] = useState(1);
             const [gameLog, setGameLog] = useState(['=== COLONY WARS ===', 'Capture the enemy Nest to win.']);
             const [phase, setPhase] = useState('planning');
@@ -359,7 +365,6 @@
                 const tile = map[tileIdx];
                 if (!card) return;
 
-                if (actionsLeft < 1) { addLog('> No action left this turn!'); return; }
                 if (resources < card.cost) { addLog(`> Need ${card.cost} resources for ${card.name}!`); return; }
 
                 const ownTile = tile.tribe.name === 'ANT';
@@ -406,15 +411,14 @@
                 }
 
                 setResources(r => r - card.cost);
-                setActionsLeft(a => a - 1);
                 setCardPlayedThisTurn(true);
                 setHand(prev => prev.filter((_, i) => i !== cardIdx));
                 setSelectedCard(null);
-            }, [hand, map, actionsLeft, resources, addLog]);
+            }, [hand, map, resources, addLog]);
 
             // ---- Player move / attack / split (accounts for fortified defense + warlord aura) ----
             const resolveMove = useCallback((sourceIdx, targetIdx, mode) => {
-                if (actionsLeft < 1) { addLog('> No action left this turn!'); setMoveSource(null); setMoveTarget(null); return; }
+                if (resources < MOVE_COST) { addLog(`> Need ${MOVE_COST} resource to move!`); setMoveSource(null); setMoveTarget(null); return; }
 
                 const source = map[sourceIdx];
                 const target = map[targetIdx];
@@ -460,10 +464,10 @@
                     return newMap;
                 });
 
-                setActionsLeft(a => a - 1);
+                setResources(r => r - MOVE_COST);
                 setMoveSource(null);
                 setMoveTarget(null);
-            }, [map, actionsLeft, addLog]);
+            }, [map, resources, addLog]);
 
             const onCardClick = useCallback((idx) => {
                 if (phase !== 'planning' || gameOver) return;
@@ -534,12 +538,11 @@
                 setMap(newMap);
                 setResourceCap(cap);
                 setResources(cap);
-                setActionsLeft(1);
                 setBonusCapNextTurn(0);
                 setCardPlayedThisTurn(false);
                 setMustDiscard(false);
                 setHand(toppedHand);
-                addLog(`> Turn ${turnNumber}: ${cap} resources, 1 action`);
+                addLog(`> Turn ${turnNumber}: ${cap} resources to spend`);
             }, [addLog]);
 
             const proceedToEnemyTurn = useCallback(() => {
@@ -564,56 +567,64 @@
                         addLog(`> Wasp nest surges! +${TRIBE_CONFIGS.WASP.spawnPower} units.`);
                     }
 
-                    const waspTiles = workMap
+                    const waspTiles = () => workMap
                         .map((t, i) => ({ t, i }))
                         .filter(({ t }) => t.tribe.name === 'WASP' && t.units > 0);
 
-                    let acted = false;
+                    let guard = 0;
+                    while (wResources >= MOVE_COST && guard < 10) {
+                        guard += 1;
+                        let acted = false;
 
-                    for (const { t, i } of waspTiles) {
-                        const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
-                        if (target !== undefined) {
-                            const { send, remain } = computeSplitAmounts(t.units, 'all');
-                            const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
-                            const effDefense = workMap[target].units + defenderBonus;
-                            const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
-                            workMap[target] = { ...workMap[target], tribe: TRIBES.WASP, units: Math.max(send - effDefense, 1), trait: null };
-                            workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
-                            addLog(capturedNest ? '> Wasps captured YOUR nest!' : `> Wasps attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
-                            acted = true;
-                            break;
+                        // Priority 1: attack a weaker adjacent ant tile
+                        for (const { t, i } of waspTiles()) {
+                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
+                            if (target !== undefined) {
+                                const { send, remain } = computeSplitAmounts(t.units, 'all');
+                                const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
+                                const effDefense = workMap[target].units + defenderBonus;
+                                const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
+                                workMap[target] = { ...workMap[target], tribe: TRIBES.WASP, units: Math.max(send - effDefense, 1), trait: null };
+                                workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
+                                addLog(capturedNest ? '> Wasps captured YOUR nest!' : `> Wasps attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
+                                wResources -= MOVE_COST;
+                                acted = true;
+                                break;
+                            }
                         }
-                    }
+                        if (acted) continue;
 
-                    if (!acted) {
-                        for (const { t, i } of waspTiles) {
+                        // Priority 2: claim adjacent neutral tile
+                        for (const { t, i } of waspTiles()) {
                             const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
                             if (target !== undefined) {
                                 const { send, remain } = computeSplitAmounts(t.units, 'all');
                                 workMap[target] = { ...workMap[target], tribe: TRIBES.WASP, units: send, trait: null };
                                 workMap[i] = { ...t, units: remain, trait: remain > 0 ? t.trait : null };
                                 addLog('> Wasps expanded territory!');
+                                wResources -= MOVE_COST;
                                 acted = true;
                                 break;
                             }
                         }
-                    }
+                        if (acted) continue;
 
-                    if (!acted && wResources >= 1) {
-                        const weakest = workMap
-                            .map((t, i) => ({ t, i }))
-                            .filter(({ t }) => t.tribe.name === 'WASP')
-                            .sort((a, b) => a.t.units - b.t.units)[0];
+                        // Priority 3: spend remaining resources reinforcing the weakest tile
+                        const weakest = waspTiles().sort((a, b) => a.t.units - b.t.units)[0];
                         if (weakest) {
                             const cost = wResources >= 2 ? 2 : 1;
                             const power = cost === 2 ? 3 : 2;
                             workMap[weakest.i] = {
-                                ...weakest.t,
-                                units: weakest.t.units + power,
-                                trait: cost === 2 ? 'fortified' : weakest.t.trait,
+                                ...workMap[weakest.i],
+                                units: workMap[weakest.i].units + power,
+                                trait: cost === 2 ? 'fortified' : workMap[weakest.i].trait,
                             };
                             addLog(cost === 2 ? '> Wasps fortify their line. 🛡' : '> Wasps reinforce their line.');
+                            wResources -= cost;
+                            acted = true;
                         }
+
+                        if (!acted) break;
                     }
 
                     setMap(workMap);
@@ -669,7 +680,6 @@
                 setBonusCapNextTurn(0);
                 setResourceCap(capForTurn(1));
                 setResources(capForTurn(1));
-                setActionsLeft(1);
                 setTurn(1);
                 setGameLog(['=== COLONY WARS ===', 'Capture the enemy Nest to win.']);
                 setPhase('planning');
@@ -704,13 +714,13 @@
                         </div>
                         <div className="header-col" style={{ textAlign: 'right' }}>
                             RES <b>{resources}</b>/{resourceCap} ◆<br />
-                            ACT <b>{actionsLeft}</b>/1 ⚡
+                            Cards & moves both spend ◆
                         </div>
                     </div>
 
                     <div className="objective">
                         🎯 Capture the WASP Nest (top) to win. Defend yours (bottom)!<br />
-                        ANT nest: +1/turn ⋅ WASP nest: +2 every 2 turns
+                        Move/attack costs {MOVE_COST}◆ ⋅ ANT nest +1/turn ⋅ WASP nest +2/2turns
                     </div>
 
                     <div className="board">
@@ -816,7 +826,7 @@
                                     ? 'Choose how much force to commit.'
                                     : moveSource !== null
                                         ? 'Tap a highlighted neighbor to move/attack.'
-                                        : 'One action per turn. Play or discard a card each turn.'}
+                                        : 'Spend resources on cards or moves, in any mix. Play or discard a card each turn.'}
                     </div>
                 </div>
             );
