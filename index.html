@@ -90,7 +90,7 @@
 
         .territory {
             background: #1F4620;
-            border: 1px solid #0F380F;
+            border: 2px solid var(--owner-border, #0F380F);
             padding: 3px 2px;
             text-align: center;
             cursor: pointer;
@@ -103,7 +103,7 @@
             transition: all 0.1s;
         }
 
-        .territory.is-nest { border: 1px dashed #FFD700; }
+        .territory.is-nest { border: 2px dashed #FFD700; }
 
         .territory.valid-target {
             box-shadow: inset 0 0 0 2px #FFD700;
@@ -114,6 +114,17 @@
             background: #4A7A2A;
             border: 2px solid #FFD700;
             box-shadow: 0 0 6px #FFD700;
+        }
+
+        .territory.under-attack {
+            border: 2px solid #FF4444;
+            box-shadow: 0 0 10px #FF4444;
+            animation: pulse-attack 0.8s infinite alternate;
+        }
+
+        @keyframes pulse-attack {
+            from { box-shadow: 0 0 6px #FF4444; }
+            to { box-shadow: 0 0 14px #FF4444; }
         }
 
         .territory.move-target {
@@ -399,13 +410,15 @@
             const handRef = useRef(hand);
             useEffect(() => { handRef.current = hand; }, [hand]);
 
+            const interceptDefendRef = useRef(() => {});
+            const skipDefendRef = useRef(() => {});
+
             const [selectedCard, setSelectedCard] = useState(null);
             const [moveSource, setMoveSource] = useState(null);
             const [cardPlayAvailable, setCardPlayAvailable] = useState(true);
             const [moveAvailable, setMoveAvailable] = useState(false); // first player doesn't get a move on turn 1
-            const [defendAvailable, setDefendAvailable] = useState(true);
-            const [defendModeActive, setDefendModeActive] = useState(false);
-            const [defendSource, setDefendSource] = useState(null);
+            const [defendAvailable, setDefendAvailable] = useState(true); // 1 intercept per round
+            const [pendingRivalAttack, setPendingRivalAttack] = useState(null); // { attackerIdx, targetIdx, power, workMap }
             const [dumpMode, setDumpMode] = useState(null); // null | 'jump-source' | 'jump-target' | 'fortify-target'
             const [dumpSource, setDumpSource] = useState(null);
             const [mustDiscard, setMustDiscard] = useState(false);
@@ -559,35 +572,6 @@
                 setMoveSource(null);
             }, [map, moveAvailable, addLog, pushHistory]);
 
-            // ---- Defend: free repositioning between two of your own adjacent tiles.
-            // Reinforce only -- can't claim or attack with this, and it doesn't cost resources.
-            const resolveDefend = useCallback((sourceIdx, targetIdx) => {
-                if (!defendAvailable) { addLog('> Already defended this turn!'); setDefendModeActive(false); setDefendSource(null); return; }
-
-                const source = map[sourceIdx];
-                const target = map[targetIdx];
-
-                if (target.tribe.name !== 'ANT') {
-                    addLog('> Defend can only reinforce your own tiles.');
-                    return;
-                }
-
-                pushHistory();
-
-                const send = source.units;
-                setMap(prev => {
-                    const newMap = [...prev];
-                    newMap[targetIdx] = { ...target, units: target.units + send };
-                    newMap[sourceIdx] = { ...source, units: 0, trait: null };
-                    return newMap;
-                });
-                addLog(`> Defensive reposition: ${target.units + send} now holding that tile.`);
-
-                setDefendAvailable(false);
-                setDefendModeActive(false);
-                setDefendSource(null);
-            }, [map, defendAvailable, addLog, pushHistory]);
-
             const playerProfile = TRIBE_CONFIGS[PLAYER_TRIBE_KEY];
 
             // ---- Resource dump: spend leftover resources on a tribe-specific bonus ----
@@ -694,7 +678,14 @@
             }, [phase, gameOver, mustDiscard, hand, addLog]);
 
             const onTileClick = useCallback((tileIdx) => {
-                if (phase !== 'planning' || gameOver || mustDiscard) return;
+                if (gameOver) return;
+
+                if (phase === 'defend_window') {
+                    interceptDefendRef.current(tileIdx);
+                    return;
+                }
+
+                if (phase !== 'planning' || mustDiscard) return;
 
                 if (dumpMode === 'jump-source') {
                     const tile = map[tileIdx];
@@ -728,30 +719,6 @@
                     return;
                 }
 
-                if (defendModeActive) {
-                    if (defendSource === null) {
-                        const tile = map[tileIdx];
-                        if (tile.tribe.name !== 'ANT' || tile.units <= 0) {
-                            addLog('> Tap one of your own unit stacks to reposition.');
-                            return;
-                        }
-                        setDefendSource(tileIdx);
-                        return;
-                    }
-                    if (tileIdx === defendSource) {
-                        setDefendSource(null);
-                        setDefendModeActive(false);
-                        addLog('> Defend cancelled.');
-                        return;
-                    }
-                    if (!isAdjacent(defendSource, tileIdx)) {
-                        addLog('> That tile is not next door.');
-                        return;
-                    }
-                    resolveDefend(defendSource, tileIdx);
-                    return;
-                }
-
                 if (selectedCard !== null) {
                     playCard(selectedCard, tileIdx);
                     return;
@@ -780,7 +747,7 @@
                 }
 
                 resolveMove(moveSource, tileIdx);
-            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, defendModeActive, defendSource, selectedCard, moveSource, moveAvailable, map, playCard, resolveMove, resolveJump, resolveFortify, resolveDefend, addLog]);
+            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, playCard, resolveMove, resolveJump, resolveFortify, addLog]);
 
             // ---- Turn management ----
             const startPlayerTurn = useCallback((currentMap, turnNumber, capBonus) => {
@@ -814,6 +781,42 @@
                 addLog(`> Turn ${turnNumber}: ${cap} eggs, 1 card + 1 move`);
             }, [addLog]);
 
+            // ---- Finish the Rival's turn: reinforce step, leftover-egg dump, then hand back to the player ----
+            const finishRivalTurn = useCallback((workMap, wResources) => {
+                const rivalProfile = TRIBE_CONFIGS[RIVAL_TRIBE_KEY];
+                const finalMap = workMap.map(t => ({ ...t }));
+
+                const weakest = finalMap
+                    .map((t, i) => ({ t, i }))
+                    .filter(({ t }) => t.tribe.name === 'RIVAL')
+                    .sort((a, b) => a.t.units - b.t.units)[0];
+                if (weakest && wResources >= 1) {
+                    const cost = wResources >= 2 ? 2 : 1;
+                    const power = cost === 2 ? 3 : 2;
+                    finalMap[weakest.i] = {
+                        ...finalMap[weakest.i],
+                        units: finalMap[weakest.i].units + power,
+                        trait: cost === 2 ? 'fortified' : finalMap[weakest.i].trait,
+                    };
+                    addLog(cost === 2 ? '> Rival fortifies their line. 🛡' : '> Rival reinforces their line.');
+                    wResources -= cost;
+                }
+
+                if (wResources >= (rivalProfile.dumpMin || 0) && rivalProfile.dumpType === 'generate') {
+                    const nestTile = finalMap.find(t => t.tribe.name === 'RIVAL' && t.type === TERRITORY_TYPES.NEST);
+                    if (nestTile) {
+                        finalMap[nestTile.id] = { ...nestTile, units: nestTile.units + wResources };
+                        addLog(`> Rival dumps leftover eggs: nest +${wResources}!`);
+                    }
+                }
+
+                setMap(finalMap);
+                const nextTurn = turn + 1;
+                setTurn(nextTurn);
+                startPlayerTurn(finalMap, nextTurn, bonusCapNextTurn);
+                setPhase('planning');
+            }, [turn, bonusCapNextTurn, addLog, startPlayerTurn]);
+
             const proceedToEnemyTurn = useCallback(() => {
                 if (gameOver) return;
                 setPhase('enemy_turn');
@@ -821,8 +824,6 @@
                 setMoveSource(null);
                 setDumpMode(null);
                 setDumpSource(null);
-                setDefendModeActive(false);
-                setDefendSource(null);
                 addLog('> Rival turn...');
 
                 setTimeout(() => {
@@ -845,69 +846,98 @@
                         .map((t, i) => ({ t, i }))
                         .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0);
 
-                    // The "move": attack a weaker adjacent ant tile, else expand into open ground
-                    let moved = false;
+                    // Look for an attack opportunity first -- but don't resolve it yet.
+                    // The player gets a chance to intercept before combat happens.
+                    let attackFound = null;
                     for (const { t, i } of rivalTiles()) {
                         const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
                         if (target !== undefined) {
-                            const send = t.units;
-                            const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
-                            const effDefense = workMap[target].units + defenderBonus;
-                            const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
-                            workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
-                            workMap[i] = { ...t, units: 0, trait: null };
-                            addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
-                            moved = true;
+                            attackFound = { attackerIdx: i, targetIdx: target, power: t.units };
                             break;
                         }
                     }
-                    if (!moved) {
-                        for (const { t, i } of rivalTiles()) {
-                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
-                            if (target !== undefined) {
-                                const send = t.units;
-                                workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null };
-                                workMap[i] = { ...t, units: 0, trait: null };
-                                addLog('> Rival expanded territory!');
-                                moved = true;
-                                break;
-                            }
+
+                    if (attackFound) {
+                        setMap(workMap); // reflect spawn immediately
+                        setPendingRivalAttack({ ...attackFound, workMap, wResources });
+                        setPhase('defend_window');
+                        addLog(`> ⚠ Rival is attacking with ${attackFound.power} power! Intercept from an adjacent tile, or let it resolve.`);
+                        return;
+                    }
+
+                    // No attack available -- try to expand into open ground instead
+                    for (const { t, i } of rivalTiles()) {
+                        const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
+                        if (target !== undefined) {
+                            const send = t.units;
+                            workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null };
+                            workMap[i] = { ...t, units: 0, trait: null };
+                            addLog('> Rival expanded territory!');
+                            break;
                         }
                     }
 
-                    // The "play": reinforce the weakest tile if resources allow
-                    const weakest = workMap
-                        .map((t, i) => ({ t, i }))
-                        .filter(({ t }) => t.tribe.name === 'RIVAL')
-                        .sort((a, b) => a.t.units - b.t.units)[0];
-                    if (weakest && wResources >= 1) {
-                        const cost = wResources >= 2 ? 2 : 1;
-                        const power = cost === 2 ? 3 : 2;
-                        workMap[weakest.i] = {
-                            ...workMap[weakest.i],
-                            units: workMap[weakest.i].units + power,
-                            trait: cost === 2 ? 'fortified' : workMap[weakest.i].trait,
-                        };
-                        addLog(cost === 2 ? '> Rival fortifies their line. 🛡' : '> Rival reinforces their line.');
-                        wResources -= cost;
-                    }
-
-                    // Leftover resources: tribe-specific dump (Ant profile auto-surges the Nest)
-                    if (wResources >= (rivalProfile.dumpMin || 0) && rivalProfile.dumpType === 'generate') {
-                        const nestTile = workMap.find(t => t.tribe.name === 'RIVAL' && t.type === TERRITORY_TYPES.NEST);
-                        if (nestTile) {
-                            workMap[nestTile.id] = { ...nestTile, units: nestTile.units + wResources };
-                            addLog(`> Rival dumps leftover eggs: nest +${wResources}!`);
-                        }
-                    }
-
-                    setMap(workMap);
-                    const nextTurn = turn + 1;
-                    setTurn(nextTurn);
-                    startPlayerTurn(workMap, nextTurn, bonusCapNextTurn);
-                    setPhase('planning');
+                    finishRivalTurn(workMap, wResources);
                 }, 700);
-            }, [gameOver, turn, bonusCapNextTurn, addLog, startPlayerTurn]);
+            }, [gameOver, turn, addLog, finishRivalTurn]);
+
+            // ---- Resolve the pending attack (called after intercept or skip) ----
+            const resolvePendingAttack = useCallback((finalWorkMap) => {
+                if (!pendingRivalAttack) return;
+                const { attackerIdx, targetIdx, power, wResources } = pendingRivalAttack;
+                const workMap = finalWorkMap.map(t => ({ ...t }));
+                const target = workMap[targetIdx];
+                const defenderBonus = target.trait === 'fortified' ? 1 : 0;
+                const effDefense = target.units + defenderBonus;
+                const capturedNest = target.type === TERRITORY_TYPES.NEST;
+
+                if (power > effDefense) {
+                    workMap[targetIdx] = { ...target, tribe: TRIBES.RIVAL, units: power - effDefense, trait: null };
+                    workMap[attackerIdx] = { ...workMap[attackerIdx], units: 0, trait: null };
+                    addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
+                } else {
+                    workMap[attackerIdx] = { ...workMap[attackerIdx], units: 0, trait: null };
+                    workMap[targetIdx] = { ...target, units: Math.max(effDefense - power, 1) };
+                    addLog(`> Your defense held!${defenderBonus ? ' Fortification helped.' : ''}`);
+                }
+
+                setPendingRivalAttack(null);
+                finishRivalTurn(workMap, wResources);
+            }, [pendingRivalAttack, addLog, finishRivalTurn]);
+
+            // ---- Intercept: reinforce the threatened tile from an adjacent tile before combat resolves ----
+            const interceptDefend = useCallback((sourceIdx) => {
+                if (!pendingRivalAttack) return;
+                if (!defendAvailable) { addLog('> Already intercepted this round!'); return; }
+
+                const tile = pendingRivalAttack.workMap[sourceIdx];
+                if (!tile || tile.tribe.name !== 'ANT' || tile.units <= 0) {
+                    addLog('> Pick one of your own unit stacks adjacent to the threatened tile.');
+                    return;
+                }
+                if (!isAdjacent(sourceIdx, pendingRivalAttack.targetIdx)) {
+                    addLog('> That tile is not adjacent to the threatened square.');
+                    return;
+                }
+
+                const target = pendingRivalAttack.workMap[pendingRivalAttack.targetIdx];
+                const reinforcedWorkMap = pendingRivalAttack.workMap.map(t => ({ ...t }));
+                reinforcedWorkMap[pendingRivalAttack.targetIdx] = { ...target, units: target.units + tile.units };
+                reinforcedWorkMap[sourceIdx] = { ...tile, units: 0, trait: null };
+
+                addLog(`> You reinforce in time! Defense now ${target.units + tile.units}.`);
+                setDefendAvailable(false);
+                resolvePendingAttack(reinforcedWorkMap);
+            }, [pendingRivalAttack, defendAvailable, addLog, resolvePendingAttack]);
+
+            const skipDefend = useCallback(() => {
+                if (!pendingRivalAttack) return;
+                addLog('> You let the attack resolve.');
+                resolvePendingAttack(pendingRivalAttack.workMap);
+            }, [pendingRivalAttack, addLog, resolvePendingAttack]);
+
+            useEffect(() => { interceptDefendRef.current = interceptDefend; }, [interceptDefend]);
+            useEffect(() => { skipDefendRef.current = skipDefend; }, [skipDefend]);
 
             // Ref so onCardClick's discard branch can trigger the enemy turn without a stale closure
             const startEnemyTurnRef = useRef(proceedToEnemyTurn);
@@ -971,17 +1001,20 @@
 
             const highlightSet = React.useMemo(() => {
                 const set = new Set();
+                if (phase === 'defend_window' && pendingRivalAttack) {
+                    if (defendAvailable) {
+                        neighbors(pendingRivalAttack.targetIdx).forEach(n => {
+                            if (pendingRivalAttack.workMap[n].tribe.name === 'ANT' && pendingRivalAttack.workMap[n].units > 0) set.add(n);
+                        });
+                    }
+                    return set;
+                }
                 if (mustDiscard) return set;
                 if (dumpMode === 'jump-target' && dumpSource !== null) {
                     jumpTargetsFrom(dumpSource).forEach(n => set.add(n));
                     return set;
                 }
                 if (dumpMode) return set;
-                if (defendModeActive && defendSource !== null) {
-                    neighbors(defendSource).forEach(n => { if (map[n].tribe.name === 'ANT') set.add(n); });
-                    return set;
-                }
-                if (defendModeActive) return set;
                 if (selectedCard !== null) {
                     map.forEach((t, i) => {
                         if (t.tribe.name === 'ANT') set.add(i);
@@ -990,7 +1023,7 @@
                     neighbors(moveSource).forEach(n => set.add(n));
                 }
                 return set;
-            }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource, defendModeActive, defendSource]);
+            }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource, phase, pendingRivalAttack, defendAvailable]);
 
             return (
                 <div className="game-container">
@@ -1002,7 +1035,7 @@
                         </div>
                         <div className="header-col" style={{ textAlign: 'right' }}>
                             EGGS <b>{resources}</b>/{resourceCap} 🥚<br />
-                            CARD {cardPlayAvailable ? '✓' : '✗'} ⋅ MOVE {moveAvailable ? '✓' : '✗'} ⋅ DEF {defendAvailable ? '✓' : '✗'}
+                            CARD {cardPlayAvailable ? '✓' : '✗'} ⋅ MOVE {moveAvailable ? '✓' : '✗'} ⋅ INTERCEPT {defendAvailable ? '✓' : '✗'}
                         </div>
                     </div>
 
@@ -1022,12 +1055,13 @@
                                             className={
                                                 'territory' +
                                                 (territory.type === TERRITORY_TYPES.NEST ? ' is-nest' : '') +
-                                                (idx === moveSource || idx === dumpSource || idx === defendSource ? ' move-source' : '') +
+                                                (idx === moveSource || idx === dumpSource ? ' move-source' : '') +
+                                                (phase === 'defend_window' && pendingRivalAttack && idx === pendingRivalAttack.targetIdx ? ' under-attack' : '') +
                                                 (highlightSet.has(idx) ? ' valid-target' : '') +
                                                 (mustDiscard ? ' discard-mode' : '')
                                             }
                                             onClick={() => onTileClick(idx)}
-                                            style={{ color: territory.tribe.color }}
+                                            style={{ color: territory.tribe.color, '--owner-border': territory.tribe.color }}
                                         >
                                             <div className="t-icon">{territory.tribe.icon || (territory.type === TERRITORY_TYPES.NEST ? NEST_EMOJI : '')}</div>
                                             <div className="t-type">{territory.type === TERRITORY_TYPES.NEST ? `${NEST_EMOJI} NEST` : 'GRD'}</div>
@@ -1059,7 +1093,17 @@
                         ))}
                     </div>
 
-                    {mustDiscard ? (
+                    {phase === 'defend_window' && pendingRivalAttack ? (
+                        <div className="action-row">
+                            <button
+                                className="control-btn confirm"
+                                onClick={() => skipDefendRef.current()}
+                                style={{ gridColumn: '1 / -1' }}
+                            >
+                                Let it resolve (no intercept)
+                            </button>
+                        </div>
+                    ) : mustDiscard ? (
                         <div className="discard-notice">⚠ Tap a card above to discard it and end your turn</div>
                     ) : dumpMode === 'jump-source' ? (
                         <div className="action-row">
@@ -1079,41 +1123,21 @@
                             </button>
                             <div className="info-text" style={{ alignSelf: 'center' }}>Tap your tile to fortify</div>
                         </div>
-                    ) : defendModeActive && defendSource === null ? (
-                        <div className="action-row">
-                            <div className="discard-notice" style={{ gridColumn: '1 / -1' }}>🛡 Tap one of your own unit stacks to reposition</div>
-                        </div>
-                    ) : defendModeActive ? (
-                        <div className="action-row">
-                            <button className="control-btn" onClick={() => { setDefendModeActive(false); setDefendSource(null); }}>
-                                Cancel Defend
-                            </button>
-                            <div className="info-text" style={{ alignSelf: 'center' }}>Tap a highlighted ally tile to reinforce</div>
-                        </div>
                     ) : (
                         <React.Fragment>
                             {selectedCard === null && moveSource === null && (
-                                <div className="action-row">
-                                    <button
-                                        className="control-btn confirm"
-                                        onClick={startDump}
-                                        title={DUMP_DESCRIPTIONS[playerProfile.dumpType]}
-                                        disabled={
-                                            gameOver ||
-                                            (playerProfile.dumpType === 'generate' ? resources < playerProfile.dumpMin : resources < playerProfile.dumpCost)
-                                        }
-                                    >
-                                        ⚡ Dump: {playerProfile.dumpLabel} {playerProfile.dumpType === 'generate' ? `(need ${playerProfile.dumpMin}+, get +${resources})` : `(${playerProfile.dumpCost}🥚)`}
-                                    </button>
-                                    <button
-                                        className="control-btn confirm"
-                                        onClick={() => setDefendModeActive(true)}
-                                        title="Free reinforcement between two of your own adjacent tiles. Doesn't cost eggs, doesn't use your move."
-                                        disabled={gameOver || !defendAvailable}
-                                    >
-                                        🛡 Defend {!defendAvailable ? '(used)' : ''}
-                                    </button>
-                                </div>
+                                <button
+                                    className="control-btn confirm"
+                                    style={{ width: '100%' }}
+                                    onClick={startDump}
+                                    title={DUMP_DESCRIPTIONS[playerProfile.dumpType]}
+                                    disabled={
+                                        gameOver ||
+                                        (playerProfile.dumpType === 'generate' ? resources < playerProfile.dumpMin : resources < playerProfile.dumpCost)
+                                    }
+                                >
+                                    ⚡ Dump: {playerProfile.dumpLabel} {playerProfile.dumpType === 'generate' ? `(need ${playerProfile.dumpMin}+, get +${resources})` : `(${playerProfile.dumpCost}🥚)`}
+                                </button>
                             )}
                             {selectedCard === null && moveSource === null && (
                                 <div className="info-text" style={{ marginTop: '-4px' }}>{DUMP_DESCRIPTIONS[playerProfile.dumpType]}</div>
