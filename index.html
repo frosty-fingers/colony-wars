@@ -329,18 +329,18 @@
         // Basic matchup is ANT vs ANT (mirror match) for now. Swap PLAYER_TRIBE_KEY /
         // RIVAL_TRIBE_KEY to 'WASP' or 'BEETLE' later, or wire them to a picker.
         const TRIBE_CONFIGS = {
-            ANT: { spawnEvery: 1, spawnPower: 1, dumpType: 'generate', dumpLabel: 'Surge Growth' },
-            WASP: { spawnEvery: 2, spawnPower: 2, dumpType: 'jump', dumpLabel: 'Wing Jump', dumpCost: 2 },
-            BEETLE: { spawnEvery: 3, spawnPower: 3, dumpType: 'fortify', dumpLabel: 'Turtle Up', dumpCost: 2 },
+            ANT: { spawnEvery: 1, spawnPower: 1, dumpType: 'generate', dumpLabel: 'Surge Growth', dumpMin: 3 },
+            WASP: { spawnEvery: 2, spawnPower: 2, dumpType: 'jump', dumpLabel: 'Wing Jump', dumpCost: 3 },
+            BEETLE: { spawnEvery: 3, spawnPower: 3, dumpType: 'fortify', dumpLabel: 'Turtle Up', dumpCost: 3 },
         };
         const PLAYER_TRIBE_KEY = 'ANT';
         const RIVAL_TRIBE_KEY = 'ANT';
         const shouldSpawn = (profile, turnNumber) => turnNumber % profile.spawnEvery === 0;
 
         const DUMP_DESCRIPTIONS = {
-            generate: 'Surge Growth: converts every unspent ◆ into bonus units at your Nest, right now.',
-            jump: 'Wing Jump: pay a flat cost to fly a unit stack over one adjacent tile and land two tiles away, skipping the middle tile entirely.',
-            fortify: 'Turtle Up: pay a flat cost to instantly fortify one of your tiles (+1 defense) without needing a Soldier card.',
+            generate: 'Surge Growth: needs 3+ unspent ◆ saved up. Converts ALL of it into bonus units at your Nest, right now. A late-game payoff for a turn you didn\'t spend on cards.',
+            jump: 'Wing Jump: costs 3◆. Flies a unit stack over one adjacent tile to land two tiles away, skipping the middle tile entirely.',
+            fortify: 'Turtle Up: costs 3◆. Instantly fortifies one of your tiles (+1 defense) without needing a Soldier card.',
         };
 
         const TRAIT_ICON = { fortified: '🛡', warlord: '★' };
@@ -568,7 +568,7 @@
             const startDump = useCallback(() => {
                 if (phase !== 'planning' || gameOver) return;
                 if (playerProfile.dumpType === 'generate') {
-                    if (resources <= 0) { addLog('> No resources left to dump.'); return; }
+                    if (resources < playerProfile.dumpMin) { addLog(`> Need ${playerProfile.dumpMin} resources for Surge Growth.`); return; }
                     pushHistory();
                     setMap(prev => {
                         const newMap = [...prev];
@@ -838,7 +838,7 @@
                     }
 
                     // Leftover resources: tribe-specific dump (Ant profile auto-surges the Nest)
-                    if (wResources > 0 && rivalProfile.dumpType === 'generate') {
+                    if (wResources >= (rivalProfile.dumpMin || 0) && rivalProfile.dumpType === 'generate') {
                         const nestTile = workMap.find(t => t.tribe.name === 'RIVAL' && t.type === TERRITORY_TYPES.NEST);
                         if (nestTile) {
                             workMap[nestTile.id] = { ...nestTile, units: nestTile.units + wResources };
@@ -1025,10 +1025,10 @@
                                     title={DUMP_DESCRIPTIONS[playerProfile.dumpType]}
                                     disabled={
                                         gameOver ||
-                                        (playerProfile.dumpType === 'generate' ? resources <= 0 : resources < playerProfile.dumpCost)
+                                        (playerProfile.dumpType === 'generate' ? resources < playerProfile.dumpMin : resources < playerProfile.dumpCost)
                                     }
                                 >
-                                    ⚡ Dump: {playerProfile.dumpLabel} {playerProfile.dumpType === 'generate' ? `(+${resources})` : `(${playerProfile.dumpCost}◆)`}
+                                    ⚡ Dump: {playerProfile.dumpLabel} {playerProfile.dumpType === 'generate' ? `(need ${playerProfile.dumpMin}+, get +${resources})` : `(${playerProfile.dumpCost}◆)`}
                                 </button>
                             )}
                             {selectedCard === null && moveSource === null && (
