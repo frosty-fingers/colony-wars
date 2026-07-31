@@ -378,13 +378,19 @@
 
         const TRAIT_ICON = { fortified: '🛡', warlord: '★' };
 
+        // Warlord aura: +1 power to allies standing NEXT TO a Warlord tile, in attack or
+        // defense. It never buffs the Warlord tile itself -- neighbors() excludes self by
+        // definition, matching "boosts what's around it" rather than "boosts itself."
+        const auraBonus = (map, idx, tribeName) =>
+            neighbors(idx).some(n => map[n].tribe.name === tribeName && map[n].trait === 'warlord') ? 1 : 0;
+
         // Mix of static (persistent while garrisoned) and on-deploy (one-shot) effects.
         // Some deploy effects grant extra actions (e.g. Elite) -- more of these can be
         // added later without changing the base 1 card + 1 move rule.
         const CARD_TYPES = [
             { id: 'worker', name: 'WORKER', cost: 1, power: 2, weight: 0.5, staticTrait: null, effect: 'DEPLOY: +1 egg next turn' },
             { id: 'soldier', name: 'SOLDIER', cost: 2, power: 3, weight: 0.35, staticTrait: 'fortified', effect: 'STATIC: +1 defense here 🛡' },
-            { id: 'elite', name: 'ELITE', cost: 4, power: 5, weight: 0.15, staticTrait: 'warlord', effect: 'DEPLOY:+1 adj,+1 move | STATIC:+1 atk aura ★' },
+            { id: 'elite', name: 'ELITE', cost: 4, power: 5, weight: 0.15, staticTrait: 'warlord', effect: 'DEPLOY:+1 adj,+1 move | STATIC:+1 to adjacent allies (atk & def) ★' },
         ];
 
         let cardUid = 0;
@@ -591,11 +597,9 @@
                         newMap[sourceIdx] = { ...source, units: 0, trait: null };
                         addLog('> Claimed new territory!');
                     } else {
-                        const auraBonus = neighbors(sourceIdx).some(n =>
-                            n !== targetIdx && prev[n].tribe.name === 'ANT' && prev[n].trait === 'warlord'
-                        ) ? 1 : 0;
-                        const defenderBonus = target.trait === 'fortified' ? 1 : 0;
-                        const effSend = send + auraBonus;
+                        const attackerAura = auraBonus(prev, sourceIdx, 'ANT');
+                        const defenderBonus = (target.trait === 'fortified' ? 1 : 0) + auraBonus(prev, targetIdx, target.tribe.name);
+                        const effSend = send + attackerAura;
                         const effDefense = target.units + defenderBonus;
 
                         if (effSend > effDefense) {
@@ -604,11 +608,11 @@
                             newMap[sourceIdx] = { ...source, units: 0, trait: null };
                             addLog(capturedNest
                                 ? '> ENEMY NEST CAPTURED!'
-                                : `> Victory! Territory conquered.${auraBonus ? ' Warlord aura helped!' : ''}`);
+                                : `> Victory! Territory conquered.${attackerAura ? ' Warlord aura helped!' : ''}`);
                         } else {
                             newMap[sourceIdx] = { ...source, units: 0, trait: null };
                             newMap[targetIdx] = { ...target, units: Math.max(effDefense - effSend, 1) };
-                            addLog(`> Attack failed. Committed units lost.${defenderBonus ? ' Their fortification held!' : ''}`);
+                            addLog(`> Attack failed. Committed units lost.${defenderBonus ? ' Defenses held!' : ''}`);
                         }
                     }
                     return newMap;
@@ -672,16 +676,18 @@
                         newMap[sourceIdx] = { ...source, units: 0, trait: null };
                         addLog('> Wing Jump! Claimed distant ground.');
                     } else {
-                        const defenderBonus = target.trait === 'fortified' ? 1 : 0;
+                        const attackerAura = auraBonus(prev, sourceIdx, 'ANT');
+                        const defenderBonus = (target.trait === 'fortified' ? 1 : 0) + auraBonus(prev, targetIdx, target.tribe.name);
+                        const effSend = send + attackerAura;
                         const effDefense = target.units + defenderBonus;
-                        if (send > effDefense) {
+                        if (effSend > effDefense) {
                             const capturedNest = target.type === TERRITORY_TYPES.NEST;
-                            newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: send - effDefense, trait: null };
+                            newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: effSend - effDefense, trait: null };
                             newMap[sourceIdx] = { ...source, units: 0, trait: null };
                             addLog(capturedNest ? '> Wing Jump captures the ENEMY NEST!' : '> Wing Jump! Surprise attack wins!');
                         } else {
                             newMap[sourceIdx] = { ...source, units: 0, trait: null };
-                            newMap[targetIdx] = { ...target, units: Math.max(effDefense - send, 1) };
+                            newMap[targetIdx] = { ...target, units: Math.max(effDefense - effSend, 1) };
                             addLog('> Wing Jump attack failed. Units lost.');
                         }
                     }
@@ -839,7 +845,7 @@
                     ? rivalTileList
                         .map(({ t, i }) => {
                             const antNeighbors = neighbors(i).filter(n => finalMap[n].tribe.name === 'ANT');
-                            const biggestThreat = antNeighbors.reduce((max, n) => Math.max(max, finalMap[n].units), 0);
+                            const biggestThreat = antNeighbors.reduce((max, n) => Math.max(max, finalMap[n].units + auraBonus(finalMap, n, 'ANT')), 0);
                             return { t, i, deficit: biggestThreat - t.units };
                         })
                         .filter(x => x.deficit > 0)
@@ -916,7 +922,7 @@
                         for (const { t, i } of rivalTiles()) {
                             for (const n of neighbors(i)) {
                                 if (workMap[n].tribe.name !== 'ANT') continue;
-                                const defenderBonus = workMap[n].trait === 'fortified' ? 1 : 0;
+                                const defenderBonus = (workMap[n].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, n, 'ANT');
                                 const effDefense = workMap[n].units + defenderBonus;
                                 if (t.units > effDefense) {
                                     attackOptions.push({
@@ -943,7 +949,7 @@
                             const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
                             if (target !== undefined) {
                                 const send = t.units;
-                                const defenderBonus = workMap[target].trait === 'fortified' ? 1 : 0;
+                                const defenderBonus = (workMap[target].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, target, 'ANT');
                                 const effDefense = workMap[target].units + defenderBonus;
                                 const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
                                 workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
