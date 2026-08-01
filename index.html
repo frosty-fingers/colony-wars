@@ -85,6 +85,7 @@
         .board-row {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
+            grid-auto-rows: 50px;
             gap: 3px;
         }
 
@@ -94,13 +95,15 @@
             padding: 3px 2px;
             text-align: center;
             cursor: pointer;
-            min-height: 42px;
+            height: 50px;
+            box-sizing: border-box;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             border-radius: 2px;
-            transition: all 0.1s;
+            transition: background 0.1s, box-shadow 0.1s;
         }
 
         .territory.is-nest { border: 2px dashed #FFD700; }
@@ -279,6 +282,31 @@
             box-shadow: 0 0 6px #FFD700;
         }
 
+        .tribe-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+        }
+
+        .tribe-btn {
+            background: #1F4620;
+            border: 1px solid #9BBC0F;
+            color: #9BBC0F;
+            border-radius: 2px;
+            padding: 6px 2px;
+            text-align: center;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 7px;
+            font-weight: bold;
+        }
+
+        .tribe-btn.selected-setting {
+            background: #4A7A2A;
+            border: 2px solid #FFD700;
+            box-shadow: 0 0 6px #FFD700;
+        }
+
         /* Desktop: widen the window and put the log in a right-hand sidebar */
         @media (min-width: 680px) {
             #root { max-width: 720px; }
@@ -347,23 +375,90 @@
             return [...twoAway];
         };
 
-        // Preset library of tribe profiles (how often + how much a Nest spawns for free,
-        // plus a face for the board). Basic matchup is ANT vs ANT (mirror match) for now.
-        // Swap PLAYER_TRIBE_KEY / RIVAL_TRIBE_KEY to 'WASP' or 'BEETLE' later, or wire
-        // them to a picker -- the icon and dump ability will follow automatically.
-        const TRIBE_CONFIGS = {
-            ANT: { spawnEvery: 1, spawnPower: 1, dumpType: 'generate', dumpLabel: 'Surge Growth', dumpMin: 3, emoji: '🐜' },
-            WASP: { spawnEvery: 2, spawnPower: 2, dumpType: 'jump', dumpLabel: 'Wing Jump', dumpCost: 3, emoji: '🐝' },
-            BEETLE: { spawnEvery: 3, spawnPower: 3, dumpType: 'fortify', dumpLabel: 'Turtle Up', dumpCost: 3, emoji: '🪲' },
+        // Diagonal neighbors (for Bee's signature movement mechanic) -- not used by the
+        // default orthogonal-only neighbors() above.
+        const diagonalNeighbors = (i) => {
+            const row = Math.floor(i / COLS), col = i % COLS;
+            const result = [];
+            if (row > 0 && col > 0) result.push(i - COLS - 1);
+            if (row > 0 && col < COLS - 1) result.push(i - COLS + 1);
+            if (row < ROWS - 1 && col > 0) result.push(i + COLS - 1);
+            if (row < ROWS - 1 && col < COLS - 1) result.push(i + COLS + 1);
+            return result;
         };
-        const PLAYER_TRIBE_KEY = 'ANT';
-        const RIVAL_TRIBE_KEY = 'ANT';
+
+        // Tiles a tile can move to, given its tribe's movement rules. Bee adds diagonals
+        // on top of the normal orthogonal set; everyone else just gets neighbors().
+        const movementTargets = (i, tribeKey) => {
+            const profile = TRIBE_CONFIGS[tribeKey];
+            return (profile && profile.diagonalMovement) ? [...neighbors(i), ...diagonalNeighbors(i)] : neighbors(i);
+        };
+
+        // Preset library of tribe profiles, built around a 3-axis spectrum:
+        //   style: 'wide' (swarm -- spread thin, many tiles) <-> 'tall' (stack -- concentrate power)
+        //   power: 'offense' <-> 'defense' (what their signature mechanic is good at)
+        //   speed: 'fast' (steady early trickle, low plateau) <-> 'slow' (rarer but bigger bursts, scales later)
+        // "style" isn't mechanically wired up yet (needs per-tribe card pools -- a bigger
+        // feature) but is recorded now so the axis is consistent across all 8 from the start.
+        // Roadmap: 4 balanced tribes first, then 8 before shipping to Game Boy. Only ANT is
+        // playable today (mirror match) -- the rest are staged here so a future tribe-picker
+        // just works. Mechanics marked TBD are proposals, not finalized.
+        const TRIBE_CONFIGS = {
+            ANT: {
+                emoji: '🐜', style: 'wide', power: 'defense', speed: 'fast',
+                spawnEvery: 1, spawnPower: 1,
+                dumpType: 'generate', dumpLabel: 'Surge Growth', dumpMin: 3,
+                mechanic: 'Surge Growth -- dump eggs into bonus Nest units',
+            },
+            BEE: {
+                emoji: '🐝', style: 'wide', power: 'offense', speed: 'slow',
+                spawnEvery: 2, spawnPower: 2,
+                diagonalMovement: true,
+                mechanic: 'Diagonal Movement -- moves and attacks diagonally too',
+            },
+            BEETLE: {
+                emoji: '🪲', style: 'tall', power: 'offense', speed: 'slow',
+                spawnEvery: 2, spawnPower: 2,
+                cleaveAttack: true,
+                mechanic: 'Cleave -- every attack also splashes adjacent enemy tiles for bonus damage',
+            },
+            SPIDER: {
+                emoji: '🕷️', style: 'tall', power: 'defense', speed: 'fast',
+                spawnEvery: 1, spawnPower: 1,
+                dumpType: 'web', dumpLabel: 'Web Trap', dumpCost: 3,
+                mechanic: 'Web Trap -- immobilizes an adjacent enemy tile until their next turn',
+            },
+            GRASSHOPPER: {
+                emoji: '🦗', style: 'wide', power: 'offense', speed: 'fast',
+                spawnEvery: 1, spawnPower: 1,
+                mechanic: 'Hop (planned) -- jump over multiple tiles in one move, further than Wing Jump ever did',
+            },
+            SNAIL: {
+                emoji: '🐌', style: 'tall', power: 'defense', speed: 'slow',
+                spawnEvery: 3, spawnPower: 3,
+                dumpType: 'fortify', dumpLabel: 'Turtle Up', dumpCost: 3,
+                mechanic: 'Turtle Up -- instant fortify without a Soldier card (inherited from the old Beetle/Spider slot)',
+            },
+            SCORPION: {
+                emoji: '🦂', style: 'tall', power: 'offense', speed: 'fast',
+                spawnEvery: 1, spawnPower: 1,
+                mechanic: 'TBD -- proposal: Sting (first-strike bonus, ignores some defense)',
+            },
+            CRAB: {
+                emoji: '🦀', style: 'wide', power: 'defense', speed: 'slow',
+                spawnEvery: 2, spawnPower: 2,
+                mechanic: 'TBD -- proposal: Mega Swarm (cheaper claims, more/smaller units per egg)',
+            },
+        };
+        const DEFAULT_TRIBE_KEY = 'ANT';
         const shouldSpawn = (profile, turnNumber) => turnNumber % profile.spawnEvery === 0;
 
+        // Icon is intentionally NOT baked in here -- it depends on which tribe the player
+        // picks at runtime, so it's computed fresh wherever a tile is displayed instead.
         const TRIBES = {
-            ANT: { name: 'ANT', color: '#D2A679', icon: TRIBE_CONFIGS[PLAYER_TRIBE_KEY].emoji },
-            RIVAL: { name: 'RIVAL', color: '#C0392B', icon: TRIBE_CONFIGS[RIVAL_TRIBE_KEY].emoji },
-            NEUTRAL: { name: 'NEUTRAL', color: '#6B7B6B', icon: '' }
+            ANT: { name: 'ANT', color: '#D2A679' },
+            RIVAL: { name: 'RIVAL', color: '#C0392B' },
+            NEUTRAL: { name: 'NEUTRAL', color: '#6B7B6B' }
         };
 
         const NEST_EMOJI = '🪺';
@@ -374,6 +469,7 @@
             generate: 'Surge Growth: needs 3+ unspent eggs saved up. Converts ALL of it into bonus units at your Nest, right now. A late-game payoff for a turn you didn\'t spend on cards.',
             jump: 'Wing Jump: costs 3 eggs. Flies a unit stack over one adjacent tile to land two tiles away, skipping the middle tile entirely.',
             fortify: 'Turtle Up: costs 3 eggs. Instantly fortifies one of your tiles (+1 defense) without needing a Soldier card.',
+            web: 'Web Trap: costs 3 eggs. Immobilizes an adjacent enemy tile -- it can\'t move or attack until their next turn starts.',
         };
 
         const TRAIT_ICON = { fortified: '🛡', warlord: '★' };
@@ -383,6 +479,22 @@
         // definition, matching "boosts what's around it" rather than "boosts itself."
         const auraBonus = (map, idx, tribeName) =>
             neighbors(idx).some(n => map[n].tribe.name === tribeName && map[n].trait === 'warlord') ? 1 : 0;
+
+        // Cleave (Beetle's passive trait): after a successful attack, splash damage hits
+        // every OTHER enemy tile adjacent to the primary target. Mutates the map in place;
+        // caller is expected to be working on a fresh clone already.
+        const CLEAVE_AMOUNT = 2;
+        const applyCleave = (map, targetIdx, attackerTribeName) => {
+            const enemyTribeName = attackerTribeName === 'ANT' ? 'RIVAL' : 'ANT';
+            let splashed = 0;
+            neighbors(targetIdx).forEach(n => {
+                if (map[n].tribe.name === enemyTribeName) {
+                    map[n] = { ...map[n], units: Math.max(map[n].units - CLEAVE_AMOUNT, 0) };
+                    splashed += 1;
+                }
+            });
+            return splashed;
+        };
 
         // Mix of static (persistent while garrisoned) and on-deploy (one-shot) effects.
         // Some deploy effects grant extra actions (e.g. Elite) -- more of these can be
@@ -411,6 +523,14 @@
 
         // Two Nest layouts to test: aligned (straight-line rush is optimal) vs
         // offset (forces at least one lateral move to reach the enemy Nest).
+        // Nest garrison: flat bonus defense a Nest tile gets on top of everything else
+        // (fortified trait, warlord aura), representing innate home-turf defense.
+        const NEST_GARRISON_LEVELS = {
+            none: { bonus: 0, label: 'None', desc: 'Nests defend with exactly their unit count, same as any tile.' },
+            single: { bonus: 2, label: 'Garrison (+2)', desc: 'Nests always defend with +2 bonus power.' },
+            double: { bonus: 4, label: 'Double Garrison (+4)', desc: 'Nests always defend with +4 bonus power.' },
+        };
+
         const NEST_LAYOUTS = {
             aligned: { ant: 17, rival: 2, label: 'Aligned', desc: 'Nests share a column -- straight-line rush is the shortest path.' },
             offset: { ant: 16, rival: 3, label: 'Offset', desc: 'Nests are diagonal from each other -- forces at least one lateral move.' },
@@ -419,10 +539,10 @@
         const generateMap = (antNestIdx, rivalNestIdx) => {
             const map = [];
             for (let i = 0; i < TOTAL; i++) {
-                map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0, trait: null });
+                map.push({ id: i, type: TERRITORY_TYPES.GROUND, tribe: TRIBES.NEUTRAL, units: 0, trait: null, webbed: false });
             }
-            map[rivalNestIdx] = { id: rivalNestIdx, type: TERRITORY_TYPES.NEST, tribe: TRIBES.RIVAL, units: 1, trait: null };
-            map[antNestIdx] = { id: antNestIdx, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null };
+            map[rivalNestIdx] = { id: rivalNestIdx, type: TERRITORY_TYPES.NEST, tribe: TRIBES.RIVAL, units: 1, trait: null, webbed: false };
+            map[antNestIdx] = { id: antNestIdx, type: TERRITORY_TYPES.NEST, tribe: TRIBES.ANT, units: 1, trait: null, webbed: false };
             return map;
         };
 
@@ -448,14 +568,17 @@
         const capForTurn = (turnNumber) => Math.min(1 + Math.floor((turnNumber - 1) / 2), 4);
 
         const ColonyWars = () => {
-            const [showSettings, setShowSettings] = useState(true);
+            const [screen, setScreen] = useState('menu'); // 'menu' | 'settings' | 'game'
             const [settings, setSettings] = useState({
                 smartAI: true,
                 summoningSickness: true,
                 nestLayout: 'aligned',
                 winCondition: 'instant',
+                nestGarrison: 'single',
             });
             const [nestIndices, setNestIndices] = useState(NEST_LAYOUTS.aligned);
+            const [playerTribeKey, setPlayerTribeKey] = useState(DEFAULT_TRIBE_KEY);
+            const [rivalTribeKey, setRivalTribeKey] = useState(DEFAULT_TRIBE_KEY);
             const [pendingCapture, setPendingCapture] = useState(null); // { winner, sinceTurn } -- for holdTurn mode
 
             const [map, setMap] = useState(() => generateMap(NEST_LAYOUTS.aligned.ant, NEST_LAYOUTS.aligned.rival));
@@ -600,7 +723,8 @@
                         addLog('> Claimed new territory!');
                     } else {
                         const attackerAura = auraBonus(prev, sourceIdx, 'ANT');
-                        const defenderBonus = (target.trait === 'fortified' ? 1 : 0) + auraBonus(prev, targetIdx, target.tribe.name);
+                        const defenderBonus = (target.trait === 'fortified' ? 1 : 0) + auraBonus(prev, targetIdx, target.tribe.name)
+                            + (target.type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
                         const effSend = send + attackerAura;
                         const effDefense = target.units + defenderBonus;
 
@@ -608,9 +732,14 @@
                             const capturedNest = target.type === TERRITORY_TYPES.NEST;
                             newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: effSend - effDefense, trait: null };
                             newMap[sourceIdx] = { ...source, units: 0, trait: null };
+                            let cleaveMsg = '';
+                            if (playerProfile.cleaveAttack) {
+                                const splashed = applyCleave(newMap, targetIdx, 'ANT');
+                                if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} nearby tile${splashed > 1 ? 's' : ''}!`;
+                            }
                             addLog(capturedNest
                                 ? '> ENEMY NEST CAPTURED!'
-                                : `> Victory! Territory conquered.${attackerAura ? ' Warlord aura helped!' : ''}`);
+                                : `> Victory! Territory conquered.${attackerAura ? ' Warlord aura helped!' : ''}${cleaveMsg}`);
                         } else {
                             newMap[sourceIdx] = { ...source, units: 0, trait: null };
                             newMap[targetIdx] = { ...target, units: Math.max(effDefense - effSend, 1) };
@@ -622,9 +751,9 @@
 
                 setMoveAvailable(false);
                 setMoveSource(null);
-            }, [map, moveAvailable, addLog, pushHistory]);
+            }, [map, moveAvailable, settings.nestGarrison, addLog, pushHistory]);
 
-            const playerProfile = TRIBE_CONFIGS[PLAYER_TRIBE_KEY];
+            const playerProfile = TRIBE_CONFIGS[playerTribeKey];
 
             // ---- Resource dump: spend leftover resources on a tribe-specific bonus ----
             const startDump = useCallback(() => {
@@ -656,6 +785,14 @@
                     setMoveSource(null);
                     setDumpMode('fortify-target');
                     addLog('> Turtle Up: tap a tile to fortify.');
+                    return;
+                }
+                if (playerProfile.dumpType === 'web') {
+                    if (resources < playerProfile.dumpCost) { addLog(`> Need ${playerProfile.dumpCost} eggs for Web Trap.`); return; }
+                    setSelectedCard(null);
+                    setMoveSource(null);
+                    setDumpMode('web-target');
+                    addLog('> Web Trap: tap an adjacent enemy tile to immobilize.');
                 }
             }, [phase, gameOver, resources, playerProfile, nestIndices, addLog, pushHistory]);
 
@@ -679,7 +816,8 @@
                         addLog('> Wing Jump! Claimed distant ground.');
                     } else {
                         const attackerAura = auraBonus(prev, sourceIdx, 'ANT');
-                        const defenderBonus = (target.trait === 'fortified' ? 1 : 0) + auraBonus(prev, targetIdx, target.tribe.name);
+                        const defenderBonus = (target.trait === 'fortified' ? 1 : 0) + auraBonus(prev, targetIdx, target.tribe.name)
+                            + (target.type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
                         const effSend = send + attackerAura;
                         const effDefense = target.units + defenderBonus;
                         if (effSend > effDefense) {
@@ -699,7 +837,7 @@
                 setResources(r => r - playerProfile.dumpCost);
                 setDumpMode(null);
                 setDumpSource(null);
-            }, [map, playerProfile, addLog, pushHistory]);
+            }, [map, playerProfile, settings.nestGarrison, addLog, pushHistory]);
 
             const resolveFortify = useCallback((tileIdx) => {
                 const tile = map[tileIdx];
@@ -711,6 +849,22 @@
                     return newMap;
                 });
                 addLog('> 🛡 Turtle Up! Tile fortified.');
+                setResources(r => r - playerProfile.dumpCost);
+                setDumpMode(null);
+            }, [map, playerProfile, addLog, pushHistory]);
+
+            // ---- Web Trap (Spider): immobilize an adjacent enemy tile until their next turn ----
+            const resolveWeb = useCallback((tileIdx) => {
+                const tile = map[tileIdx];
+                if (tile.tribe.name !== 'RIVAL') { addLog('> Web Trap can only target an enemy tile.'); return; }
+                if (!adjacentToTribe(map, tileIdx, 'ANT')) { addLog('> That tile is not adjacent to your territory.'); return; }
+                pushHistory();
+                setMap(prev => {
+                    const newMap = [...prev];
+                    newMap[tileIdx] = { ...tile, webbed: true };
+                    return newMap;
+                });
+                addLog('> 🕸️ Web Trap! Enemy tile immobilized until their next turn.');
                 setResources(r => r - playerProfile.dumpCost);
                 setDumpMode(null);
             }, [map, playerProfile, addLog, pushHistory]);
@@ -767,6 +921,11 @@
                     return;
                 }
 
+                if (dumpMode === 'web-target') {
+                    resolveWeb(tileIdx);
+                    return;
+                }
+
                 if (selectedCard !== null) {
                     playCard(selectedCard, tileIdx);
                     return;
@@ -777,6 +936,10 @@
                     const tile = map[tileIdx];
                     if (settings.summoningSickness && tileIdx === summonedTileThisTurn) {
                         addLog('> 💤 This tile was just summoned to -- it can\'t move this turn.');
+                        return;
+                    }
+                    if (tile.webbed) {
+                        addLog('> 🕸️ This tile is webbed -- it can\'t move until next turn.');
                         return;
                     }
                     if (tile.tribe.name === 'ANT' && tile.units > 0) {
@@ -793,24 +956,24 @@
                     return;
                 }
 
-                if (!isAdjacent(moveSource, tileIdx)) {
-                    addLog('> That tile is not next door.');
+                if (!movementTargets(moveSource, playerTribeKey).includes(tileIdx)) {
+                    addLog('> That tile is not reachable.');
                     return;
                 }
 
                 resolveMove(moveSource, tileIdx);
-            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, settings.summoningSickness, summonedTileThisTurn, playCard, resolveMove, resolveJump, resolveFortify, addLog]);
+            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, settings.summoningSickness, summonedTileThisTurn, playerTribeKey, playCard, resolveMove, resolveJump, resolveFortify, resolveWeb, addLog]);
 
             // ---- Turn management ----
             const startPlayerTurn = useCallback((currentMap, turnNumber, capBonus) => {
                 const cap = capForTurn(turnNumber) + capBonus;
-                const playerProfile = TRIBE_CONFIGS[PLAYER_TRIBE_KEY];
+                const playerProfile = TRIBE_CONFIGS[playerTribeKey];
                 const spawnNow = shouldSpawn(playerProfile, turnNumber);
 
                 const newMap = currentMap.map(t => {
                     if (t.tribe.name !== 'ANT') return t;
                     const spawned = (t.type === TERRITORY_TYPES.NEST && spawnNow) ? t.units + playerProfile.spawnPower : t.units;
-                    return { ...t, units: spawned };
+                    return { ...t, units: spawned, webbed: false };
                 });
                 if (spawnNow) addLog(`> Your nest spawns +${playerProfile.spawnPower} unit.`);
 
@@ -829,11 +992,11 @@
                 setHand(toppedHand);
                 setHistory([]); // undo only applies within the turn just starting
                 addLog(`> Turn ${turnNumber}: ${cap} eggs, 1 card + 1 move`);
-            }, [addLog]);
+            }, [addLog, playerTribeKey]);
 
             // ---- Finish the Rival's turn: reinforce step, leftover-egg dump, then hand back to the player ----
             const finishRivalTurn = useCallback((workMap, wResources) => {
-                const rivalProfile = TRIBE_CONFIGS[RIVAL_TRIBE_KEY];
+                const rivalProfile = TRIBE_CONFIGS[rivalTribeKey];
                 const finalMap = workMap.map(t => ({ ...t }));
 
                 // Smart mode: reinforce whichever tile is actually under threat (a stronger Ant
@@ -883,7 +1046,7 @@
                 setTurn(nextTurn);
                 startPlayerTurn(finalMap, nextTurn, bonusCapNextTurn);
                 setPhase('planning');
-            }, [turn, bonusCapNextTurn, settings.smartAI, addLog, startPlayerTurn]);
+            }, [turn, bonusCapNextTurn, settings.smartAI, rivalTribeKey, addLog, startPlayerTurn]);
 
             const proceedToEnemyTurn = useCallback(() => {
                 if (gameOver) return;
@@ -895,9 +1058,9 @@
                 addLog('> Rival turn...');
 
                 setTimeout(() => {
-                    let workMap = mapRef.current.map(t => ({ ...t }));
+                    let workMap = mapRef.current.map(t => t.tribe.name === 'RIVAL' ? { ...t, webbed: false } : { ...t });
 
-                    const rivalProfile = TRIBE_CONFIGS[RIVAL_TRIBE_KEY];
+                    const rivalProfile = TRIBE_CONFIGS[rivalTribeKey];
                     let wResources = capForTurn(turn);
                     const spawnNow = shouldSpawn(rivalProfile, turn);
 
@@ -912,7 +1075,7 @@
 
                     const rivalTiles = () => workMap
                         .map((t, i) => ({ t, i }))
-                        .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0);
+                        .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0 && !t.webbed);
 
                     // The "move": attack, else expand. Resolves immediately -- your defense is
                     // repositioning with your own move. Smart mode picks the most valuable
@@ -924,7 +1087,8 @@
                         for (const { t, i } of rivalTiles()) {
                             for (const n of neighbors(i)) {
                                 if (workMap[n].tribe.name !== 'ANT') continue;
-                                const defenderBonus = (workMap[n].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, n, 'ANT');
+                                const defenderBonus = (workMap[n].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, n, 'ANT')
+                                    + (workMap[n].type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
                                 const effDefense = workMap[n].units + defenderBonus;
                                 if (t.units > effDefense) {
                                     attackOptions.push({
@@ -943,7 +1107,12 @@
                             const atk = attackOptions[0];
                             workMap[atk.targetIdx] = { ...workMap[atk.targetIdx], tribe: TRIBES.RIVAL, units: Math.max(atk.power - atk.effDefense, 1), trait: null };
                             workMap[atk.attackerIdx] = { ...workMap[atk.attackerIdx], units: 0, trait: null };
-                            addLog(atk.isNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${atk.defenderBonus ? ' (broke your fortification)' : ''}`);
+                            let cleaveMsg = '';
+                            if (rivalProfile.cleaveAttack) {
+                                const splashed = applyCleave(workMap, atk.targetIdx, 'RIVAL');
+                                if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
+                            }
+                            addLog(atk.isNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${atk.defenderBonus ? ' (broke your fortification)' : ''}${cleaveMsg}`);
                             moved = true;
                         }
                     } else {
@@ -951,12 +1120,18 @@
                             const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
                             if (target !== undefined) {
                                 const send = t.units;
-                                const defenderBonus = (workMap[target].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, target, 'ANT');
+                                const defenderBonus = (workMap[target].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, target, 'ANT')
+                                    + (workMap[target].type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
                                 const effDefense = workMap[target].units + defenderBonus;
                                 const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
                                 workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
                                 workMap[i] = { ...t, units: 0, trait: null };
-                                addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}`);
+                                let cleaveMsg = '';
+                                if (rivalProfile.cleaveAttack) {
+                                    const splashed = applyCleave(workMap, target, 'RIVAL');
+                                    if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
+                                }
+                                addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}${cleaveMsg}`);
                                 moved = true;
                                 break;
                             }
@@ -1010,7 +1185,7 @@
 
                     finishRivalTurn(workMap, wResources);
                 }, 700);
-            }, [gameOver, turn, settings.smartAI, nestIndices, addLog, finishRivalTurn]);
+            }, [gameOver, turn, settings.smartAI, settings.nestGarrison, nestIndices, rivalTribeKey, addLog, finishRivalTurn]);
 
             // Ref so onCardClick's discard branch can trigger the enemy turn without a stale closure
             const startEnemyTurnRef = useRef(proceedToEnemyTurn);
@@ -1137,23 +1312,101 @@
                     jumpTargetsFrom(dumpSource).forEach(n => set.add(n));
                     return set;
                 }
+                if (dumpMode === 'web-target') {
+                    map.forEach((t, i) => {
+                        if (t.tribe.name === 'RIVAL' && adjacentToTribe(map, i, 'ANT')) set.add(i);
+                    });
+                    return set;
+                }
                 if (dumpMode) return set;
                 if (selectedCard !== null) {
                     map.forEach((t, i) => {
                         if (t.tribe.name === 'ANT') set.add(i);
                     });
                 } else if (moveSource !== null) {
-                    neighbors(moveSource).forEach(n => set.add(n));
+                    movementTargets(moveSource, playerTribeKey).forEach(n => set.add(n));
                 }
                 return set;
-            }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource]);
+            }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource, playerTribeKey]);
 
-            if (showSettings) {
+            if (screen === 'menu') {
                 return (
                     <div className="game-container">
                         <div className="main-col">
                             <div className="header">
-                                <div className="header-col"><b>⚙ TEST SETTINGS</b></div>
+                                <div className="header-col"><b>🐜 COLONY WARS 🐝</b></div>
+                            </div>
+
+                            <div className="objective">
+                                Capture (or hold, or annihilate) the Rival colony.<br />
+                                Pick your tribe and theirs -- defaults to Ant vs Ant.
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Your Tribe</div>
+                                <div className="tribe-grid">
+                                    {Object.entries(TRIBE_CONFIGS).map(([key, t]) => (
+                                        <button
+                                            key={key}
+                                            className={'tribe-btn' + (playerTribeKey === key ? ' selected-setting' : '')}
+                                            onClick={() => setPlayerTribeKey(key)}
+                                        >
+                                            <div style={{ fontSize: '16px' }}>{t.emoji}</div>
+                                            <div>{key}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="info-text" style={{ marginTop: '4px' }}>
+                                    {TRIBE_CONFIGS[playerTribeKey].style}/{TRIBE_CONFIGS[playerTribeKey].power}/{TRIBE_CONFIGS[playerTribeKey].speed} — {TRIBE_CONFIGS[playerTribeKey].mechanic}
+                                </div>
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Rival Tribe</div>
+                                <div className="tribe-grid">
+                                    {Object.entries(TRIBE_CONFIGS).map(([key, t]) => (
+                                        <button
+                                            key={key}
+                                            className={'tribe-btn' + (rivalTribeKey === key ? ' selected-setting' : '')}
+                                            onClick={() => setRivalTribeKey(key)}
+                                        >
+                                            <div style={{ fontSize: '16px' }}>{t.emoji}</div>
+                                            <div>{key}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="info-text" style={{ marginTop: '4px' }}>
+                                    {TRIBE_CONFIGS[rivalTribeKey].style}/{TRIBE_CONFIGS[rivalTribeKey].power}/{TRIBE_CONFIGS[rivalTribeKey].speed} — {TRIBE_CONFIGS[rivalTribeKey].mechanic}
+                                </div>
+                            </div>
+
+                            <button
+                                className="control-btn confirm"
+                                style={{ width: '100%', padding: '16px' }}
+                                onClick={() => { resetGame(); setScreen('game'); }}
+                            >
+                                ▶ Start Game
+                            </button>
+                            <button
+                                className="control-btn"
+                                style={{ width: '100%' }}
+                                onClick={() => setScreen('settings')}
+                            >
+                                ⚙ Game Options
+                            </button>
+
+                            <div className="info-text">Matchup: {TRIBE_CONFIGS[playerTribeKey].emoji} {playerTribeKey} vs {TRIBE_CONFIGS[rivalTribeKey].emoji} {rivalTribeKey} ⋅ {settings.smartAI ? 'Smart' : 'Original'} AI ⋅ Sickness {settings.summoningSickness ? 'On' : 'Off'} ⋅ {NEST_LAYOUTS[settings.nestLayout].label} nests ⋅ {settings.winCondition} win ⋅ {NEST_GARRISON_LEVELS[settings.nestGarrison].label}</div>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (screen === 'settings') {
+                return (
+                    <div className="game-container">
+                        <div className="main-col">
+                            <div className="header">
+                                <div className="header-col"><b>⚙ GAME OPTIONS</b></div>
                             </div>
 
                             <div className="settings-section">
@@ -1231,13 +1484,35 @@
                                 </div>
                             </div>
 
-                            <button
-                                className="control-btn confirm"
-                                style={{ width: '100%', padding: '14px' }}
-                                onClick={() => { resetGame(); setShowSettings(false); }}
-                            >
-                                ▶ Start Game
-                            </button>
+                            <div className="settings-section">
+                                <div className="settings-title">Nest Garrison</div>
+                                <div className="settings-options">
+                                    {Object.entries(NEST_GARRISON_LEVELS).map(([key, level]) => (
+                                        <button
+                                            key={key}
+                                            className={'control-btn' + (settings.nestGarrison === key ? ' selected-setting' : '')}
+                                            onClick={() => setSettings(s => ({ ...s, nestGarrison: key }))}
+                                        >
+                                            {level.label} — {level.desc}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="action-row">
+                                <button
+                                    className="control-btn"
+                                    onClick={() => setScreen('menu')}
+                                >
+                                    ◀ Back to Menu
+                                </button>
+                                <button
+                                    className="control-btn confirm"
+                                    onClick={() => { resetGame(); setScreen('game'); }}
+                                >
+                                    ▶ Start Game
+                                </button>
+                            </div>
 
                             <div className="info-text">Change these any time from the game-over screen.</div>
                         </div>
@@ -1294,11 +1569,20 @@
                                             onClick={() => onTileClick(idx)}
                                             style={{ color: territory.tribe.color, '--owner-border': territory.tribe.color }}
                                         >
-                                            <div className="t-icon">{territory.tribe.icon || (territory.type === TERRITORY_TYPES.NEST ? NEST_EMOJI : '')}</div>
+                                            <div className="t-icon">
+                                                {territory.tribe.name === 'ANT' ? TRIBE_CONFIGS[playerTribeKey].emoji
+                                                    : territory.tribe.name === 'RIVAL' ? TRIBE_CONFIGS[rivalTribeKey].emoji
+                                                        : (territory.type === TERRITORY_TYPES.NEST ? NEST_EMOJI : '')}
+                                            </div>
                                             <div className="t-type">{territory.type === TERRITORY_TYPES.NEST ? `${NEST_EMOJI} NEST` : 'GRD'}</div>
-                                            {territory.units > 0 && <div className="t-units">{territory.units}</div>}
-                                            {territory.trait && <div className="t-trait">{TRAIT_ICON[territory.trait]}</div>}
-                                            {settings.summoningSickness && idx === summonedTileThisTurn && <div className="t-trait">💤</div>}
+                                            <div className="t-units">{territory.units > 0 ? territory.units : '\u00A0'}</div>
+                                            <div className="t-trait">
+                                                {[
+                                                    territory.trait ? TRAIT_ICON[territory.trait] : null,
+                                                    (settings.summoningSickness && idx === summonedTileThisTurn) ? '💤' : null,
+                                                    territory.webbed ? '🕸️' : null,
+                                                ].filter(Boolean).join(' ') || '\u00A0'}
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -1345,9 +1629,16 @@
                             </button>
                             <div className="info-text" style={{ alignSelf: 'center' }}>Tap your tile to fortify</div>
                         </div>
+                    ) : dumpMode === 'web-target' ? (
+                        <div className="action-row">
+                            <button className="control-btn" onClick={() => setDumpMode(null)}>
+                                Cancel
+                            </button>
+                            <div className="info-text" style={{ alignSelf: 'center' }}>Tap an adjacent enemy tile to web</div>
+                        </div>
                     ) : (
                         <React.Fragment>
-                            {selectedCard === null && moveSource === null && (
+                            {selectedCard === null && moveSource === null && playerProfile.dumpType && (
                                 <button
                                     className="control-btn confirm"
                                     style={{ width: '100%' }}
@@ -1362,7 +1653,9 @@
                                 </button>
                             )}
                             {selectedCard === null && moveSource === null && (
-                                <div className="info-text" style={{ marginTop: '-4px' }}>{DUMP_DESCRIPTIONS[playerProfile.dumpType]}</div>
+                                <div className="info-text" style={{ marginTop: '-4px' }}>
+                                    {playerProfile.dumpType ? DUMP_DESCRIPTIONS[playerProfile.dumpType] : playerProfile.mechanic}
+                                </div>
                             )}
                             <div className="action-row three-col">
                                 <button
@@ -1395,11 +1688,12 @@
                         <div>
                             <div className="game-over">
                                 {winner === 'ANT'
-                                    ? `${TRIBE_CONFIGS[PLAYER_TRIBE_KEY].emoji} VICTORY! ${TRIBE_CONFIGS[PLAYER_TRIBE_KEY].emoji}`
-                                    : `${TRIBE_CONFIGS[RIVAL_TRIBE_KEY].emoji} DEFEAT ${TRIBE_CONFIGS[RIVAL_TRIBE_KEY].emoji}`}
+                                    ? `${TRIBE_CONFIGS[playerTribeKey].emoji} VICTORY! ${TRIBE_CONFIGS[playerTribeKey].emoji}`
+                                    : `${TRIBE_CONFIGS[rivalTribeKey].emoji} DEFEAT ${TRIBE_CONFIGS[rivalTribeKey].emoji}`}
                             </div>
                             <button className="restart-btn" onClick={resetGame} style={{ marginTop: '6px' }}>Play Again (same settings)</button>
-                            <button className="restart-btn" onClick={() => setShowSettings(true)} style={{ marginTop: '6px' }}>⚙ Change Settings</button>
+                            <button className="restart-btn" onClick={() => setScreen('settings')} style={{ marginTop: '6px' }}>⚙ Game Options</button>
+                            <button className="restart-btn" onClick={() => setScreen('menu')} style={{ marginTop: '6px' }}>🏠 Main Menu</button>
                         </div>
                     )}
 
