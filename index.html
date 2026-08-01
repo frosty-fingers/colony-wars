@@ -225,6 +225,29 @@
             border-radius: 2px;
         }
 
+        .action-panel {
+            min-height: 102px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            gap: 6px;
+        }
+
+        .last-action {
+            background: #071907;
+            border: 1px solid #1F4620;
+            border-radius: 2px;
+            padding: 6px 8px;
+            font-size: 10px;
+            font-weight: bold;
+            text-align: center;
+            min-height: 14px;
+            color: #9BBC0F;
+        }
+
+        .last-action.good { border-color: #FFD700; color: #FFD700; }
+        .last-action.bad { border-color: #FF6B6B; color: #FF6B6B; }
+
         .game-over {
             background: #8B0000;
             color: #FFD700;
@@ -609,6 +632,10 @@
             const [resources, setResources] = useState(capForTurn(1));
             const [turn, setTurn] = useState(1);
             const [gameLog, setGameLog] = useState(['=== COLONY WARS ===', 'Capture the enemy Nest to win.', 'Turn 1: card only -- no move (first-turn balance).']);
+            const logRef = useRef(null);
+            useEffect(() => {
+                if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+            }, [gameLog]);
             const [phase, setPhase] = useState('planning');
             const [gameOver, setGameOver] = useState(false);
             const [winner, setWinner] = useState(null);
@@ -1343,6 +1370,8 @@
                 setHistory([]);
             };
 
+            const lastLogLine = gameLog[gameLog.length - 1] || '';
+
             const highlightSet = React.useMemo(() => {
                 const set = new Set();
                 if (mustDiscard) return set;
@@ -1591,6 +1620,14 @@
                         </div>
                     </div>
 
+                    <div className={
+                        'last-action' +
+                        (/YOU WIN|CAPTURED!|Victory|reinforce in time|held/i.test(lastLogLine) && !/Rival/i.test(lastLogLine) ? ' good' : '') +
+                        (/YOU LOSE|Rival captured|Rival attacked and won|Attack failed/i.test(lastLogLine) ? ' bad' : '')
+                    }>
+                        {lastLogLine}
+                    </div>
+
                     <div className="objective">
                         {settings.winCondition === 'annihilation'
                             ? '🎯 Wipe out every RIVAL tile to win. Nest capture alone won\'t end it!'
@@ -1666,6 +1703,7 @@
                         ))}
                     </div>
 
+                    <div className="action-panel">
                     {mustDiscard ? (
                         <div className="discard-notice">⚠ Tap a card above to discard it and end your turn</div>
                     ) : dumpMode === 'jump-source' ? (
@@ -1740,6 +1778,7 @@
                             </div>
                         </React.Fragment>
                     )}
+                    </div>
 
                     {gameOver && (
                         <div>
@@ -1765,7 +1804,7 @@
                     </div>
                     </div>
 
-                    <div className="log">
+                    <div className="log" ref={logRef}>
                         <div className="log-title">Battle Log</div>
                         {gameLog.map((line, i) => <div key={i} className="log-line">{line}</div>)}
                     </div>
