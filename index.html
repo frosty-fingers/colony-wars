@@ -578,6 +578,7 @@
                 nestLayout: 'aligned',
                 winCondition: 'instant',
                 nestGarrison: 'single',
+                workerBanking: true,
             });
             const [nestIndices, setNestIndices] = useState(NEST_LAYOUTS.aligned);
             const [playerTribeKey, setPlayerTribeKey] = useState(DEFAULT_TRIBE_KEY);
@@ -602,6 +603,7 @@
             const [cardPlayedThisTurn, setCardPlayedThisTurn] = useState(false);
             const [summonedTileThisTurn, setSummonedTileThisTurn] = useState(null);
             const [abilityArmed, setAbilityArmed] = useState(false); // Bee's Extend Wings / Beetle's Arm Cleave, spent by your next move this turn
+            const [workerPlayedThisTurn, setWorkerPlayedThisTurn] = useState(false); // gates egg-banking at end of turn
             const [bonusCapNextTurn, setBonusCapNextTurn] = useState(0);
             const [resourceCap, setResourceCap] = useState(capForTurn(1));
             const [resources, setResources] = useState(capForTurn(1));
@@ -684,6 +686,7 @@
 
                 if (card.id === 'worker') {
                     setBonusCapNextTurn(b => b + 1);
+                    setWorkerPlayedThisTurn(true);
                     addLog('> Industrious! +1 egg next turn.');
                 }
 
@@ -1012,6 +1015,7 @@
                 setCardPlayedThisTurn(false);
                 setSummonedTileThisTurn(null);
                 setAbilityArmed(false);
+                setWorkerPlayedThisTurn(false);
                 setMustDiscard(false);
                 setHand(toppedHand);
                 setHistory([]); // undo only applies within the turn just starting
@@ -1074,6 +1078,12 @@
 
             const proceedToEnemyTurn = useCallback(() => {
                 if (gameOver) return;
+
+                if (settings.workerBanking && workerPlayedThisTurn && resources > 0) {
+                    setBonusCapNextTurn(b => b + resources);
+                    addLog(`> 🐛 Worker banks ${resources} leftover egg${resources > 1 ? 's' : ''} for next turn!`);
+                }
+
                 setPhase('enemy_turn');
                 setSelectedCard(null);
                 setMoveSource(null);
@@ -1211,7 +1221,7 @@
 
                     finishRivalTurn(workMap, wResources);
                 }, 700);
-            }, [gameOver, turn, settings.smartAI, settings.nestGarrison, nestIndices, rivalTribeKey, addLog, finishRivalTurn]);
+            }, [gameOver, turn, settings.smartAI, settings.nestGarrison, settings.workerBanking, workerPlayedThisTurn, resources, nestIndices, rivalTribeKey, addLog, finishRivalTurn]);
 
             // Ref so onCardClick's discard branch can trigger the enemy turn without a stale closure
             const startEnemyTurnRef = useRef(proceedToEnemyTurn);
@@ -1311,6 +1321,7 @@
                 setDumpSource(null);
                 setSummonedTileThisTurn(null);
                 setAbilityArmed(false);
+                setWorkerPlayedThisTurn(false);
                 setMustDiscard(false);
                 setCardPlayAvailable(true);
                 setMoveAvailable(false); // first player doesn't get a move on turn 1
@@ -1422,7 +1433,7 @@
                                 ⚙ Game Options
                             </button>
 
-                            <div className="info-text">Matchup: {TRIBE_CONFIGS[playerTribeKey].emoji} {playerTribeKey} vs {TRIBE_CONFIGS[rivalTribeKey].emoji} {rivalTribeKey} ⋅ {settings.smartAI ? 'Smart' : 'Original'} AI ⋅ Sickness {settings.summoningSickness ? 'On' : 'Off'} ⋅ {NEST_LAYOUTS[settings.nestLayout].label} nests ⋅ {settings.winCondition} win ⋅ {NEST_GARRISON_LEVELS[settings.nestGarrison].label}</div>
+                            <div className="info-text">Matchup: {TRIBE_CONFIGS[playerTribeKey].emoji} {playerTribeKey} vs {TRIBE_CONFIGS[rivalTribeKey].emoji} {rivalTribeKey} ⋅ {settings.smartAI ? 'Smart' : 'Original'} AI ⋅ Sickness {settings.summoningSickness ? 'On' : 'Off'} ⋅ {NEST_LAYOUTS[settings.nestLayout].label} nests ⋅ {settings.winCondition} win ⋅ {NEST_GARRISON_LEVELS[settings.nestGarrison].label} ⋅ Banking {settings.workerBanking ? 'On' : 'Off'}</div>
                         </div>
                     </div>
                 );
@@ -1523,6 +1534,24 @@
                                             {level.label} — {level.desc}
                                         </button>
                                     ))}
+                                </div>
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Worker Egg Banking</div>
+                                <div className="settings-options">
+                                    <button
+                                        className={'control-btn' + (settings.workerBanking ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, workerBanking: true }))}
+                                    >
+                                        On — playing a Worker also banks this turn's leftover eggs into next turn's cap
+                                    </button>
+                                    <button
+                                        className={'control-btn' + (!settings.workerBanking ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, workerBanking: false }))}
+                                    >
+                                        Off — unspent eggs are always lost at end of turn, Worker only gives its flat +1
+                                    </button>
                                 </div>
                             </div>
 
