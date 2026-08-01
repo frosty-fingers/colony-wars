@@ -593,6 +593,136 @@
         // Slow resource growth: +1 cap every OTHER turn, caps at 4 (plus any Worker bonus)
         const capForTurn = (turnNumber) => Math.min(1 + Math.floor((turnNumber - 1) / 2), 4);
 
+        // Who acts first this round. Normally Ant always goes first. When alternating is
+        // on, whoever went second last round goes first this round -- so the sequence
+        // across rounds is ANT RIVAL | RIVAL ANT | ANT RIVAL | RIVAL ANT ..., meaning
+        // whoever's "due" gets two turns in a row at each boundary. This is a pure
+        // function of the round number and settings, safe to call from anywhere.
+        const firstMoverThisRound = (turnNumber, settings) =>
+            (settings.alternatingFirstPlayer && turnNumber % 2 === 0) ? 'RIVAL' : 'ANT';
+
+        // The Rival's full move-and-spawn decision for one turn: spawn, then attack or
+        // expand. Pure function (no React state) so it can run identically whether the
+        // Rival is going first or second this round. Returns the updated map and however
+        // many eggs are left for the reinforce/dump step that follows.
+        function runRivalMoveAndSpawn(inputMap, turnNumber, rivalProfile, nestIndices, settings, addLog) {
+            let workMap = inputMap.map(t => t.tribe.name === 'RIVAL' ? { ...t, webbed: false } : { ...t });
+            let wResources = capForTurn(turnNumber);
+            const spawnNow = shouldSpawn(rivalProfile, turnNumber);
+
+            if (spawnNow) {
+                workMap = workMap.map(t =>
+                    (t.tribe.name === 'RIVAL' && t.type === TERRITORY_TYPES.NEST)
+                        ? { ...t, units: t.units + rivalProfile.spawnPower }
+                        : t
+                );
+                addLog(`> Rival nest surges! +${rivalProfile.spawnPower} units.`);
+            }
+
+            const rivalTiles = () => workMap
+                .map((t, i) => ({ t, i }))
+                .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0 && !t.webbed);
+
+            let moved = false;
+            if (settings.smartAI) {
+                const attackOptions = [];
+                for (const { t, i } of rivalTiles()) {
+                    for (const n of neighbors(i)) {
+                        if (workMap[n].tribe.name !== 'ANT') continue;
+                        const defenderBonus = (workMap[n].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, n, 'ANT')
+                            + (workMap[n].type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
+                        const effDefense = workMap[n].units + defenderBonus;
+                        if (t.units > effDefense) {
+                            attackOptions.push({
+                                attackerIdx: i, targetIdx: n, power: t.units, effDefense,
+                                isNest: workMap[n].type === TERRITORY_TYPES.NEST,
+                                defenderBonus,
+                            });
+                        }
+                    }
+                }
+                if (attackOptions.length > 0) {
+                    attackOptions.sort((a, b) => {
+                        if (a.isNest !== b.isNest) return a.isNest ? -1 : 1;
+                        return b.effDefense - a.effDefense;
+                    });
+                    const atk = attackOptions[0];
+                    workMap[atk.targetIdx] = { ...workMap[atk.targetIdx], tribe: TRIBES.RIVAL, units: Math.max(atk.power - atk.effDefense, 1), trait: null };
+                    workMap[atk.attackerIdx] = { ...workMap[atk.attackerIdx], units: 0, trait: null };
+                    let cleaveMsg = '';
+                    if (rivalProfile.dumpType === 'cleave' && wResources >= rivalProfile.dumpCost) {
+                        wResources -= rivalProfile.dumpCost;
+                        const splashed = applyCleave(workMap, atk.targetIdx, 'RIVAL');
+                        if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
+                    }
+                    addLog(atk.isNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${atk.defenderBonus ? ' (broke your fortification)' : ''}${cleaveMsg}`);
+                    moved = true;
+                }
+            } else {
+                for (const { t, i } of rivalTiles()) {
+                    const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
+                    if (target !== undefined) {
+                        const send = t.units;
+                        const defenderBonus = (workMap[target].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, target, 'ANT')
+                            + (workMap[target].type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
+                        const effDefense = workMap[target].units + defenderBonus;
+                        const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
+                        workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
+                        workMap[i] = { ...t, units: 0, trait: null };
+                        let cleaveMsg = '';
+                        if (rivalProfile.dumpType === 'cleave' && wResources >= rivalProfile.dumpCost) {
+                            wResources -= rivalProfile.dumpCost;
+                            const splashed = applyCleave(workMap, target, 'RIVAL');
+                            if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
+                        }
+                        addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}${cleaveMsg}`);
+                        moved = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!moved) {
+                if (settings.smartAI) {
+                    const antTiles = workMap.map((t, i) => ({ t, i })).filter(({ t }) => t.tribe.name === 'ANT');
+                    if (antTiles.length > 0) {
+                        const distToRivalNest = bfsDistances(nestIndices.rival);
+                        const threat = antTiles.sort((a, b) => distToRivalNest[a.i] - distToRivalNest[b.i])[0];
+                        const distToThreat = bfsDistances(threat.i);
+                        let bestExpand = null;
+                        for (const { t, i } of rivalTiles()) {
+                            for (const n of neighbors(i)) {
+                                if (workMap[n].tribe.name === 'NEUTRAL') {
+                                    const d = distToThreat[n];
+                                    if (!bestExpand || d < bestExpand.d) bestExpand = { i, target: n, d, units: t.units };
+                                }
+                            }
+                        }
+                        if (bestExpand) {
+                            workMap[bestExpand.target] = { ...workMap[bestExpand.target], tribe: TRIBES.RIVAL, units: bestExpand.units, trait: null };
+                            workMap[bestExpand.i] = { ...workMap[bestExpand.i], units: 0, trait: null };
+                            addLog('> Rival advances toward your forces!');
+                            moved = true;
+                        }
+                    }
+                }
+                if (!moved) {
+                    for (const { t, i } of rivalTiles()) {
+                        const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
+                        if (target !== undefined) {
+                            const send = t.units;
+                            workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null };
+                            workMap[i] = { ...t, units: 0, trait: null };
+                            addLog('> Rival expanded territory!');
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return { workMap, wResources };
+        }
+
         const ColonyWars = () => {
             const [screen, setScreen] = useState('menu'); // 'menu' | 'settings' | 'game'
             const [settings, setSettings] = useState({
@@ -602,11 +732,13 @@
                 winCondition: 'instant',
                 nestGarrison: 'single',
                 workerBanking: true,
+                alternatingFirstPlayer: true,
             });
             const [nestIndices, setNestIndices] = useState(NEST_LAYOUTS.aligned);
             const [playerTribeKey, setPlayerTribeKey] = useState(DEFAULT_TRIBE_KEY);
             const [rivalTribeKey, setRivalTribeKey] = useState(DEFAULT_TRIBE_KEY);
             const [pendingCapture, setPendingCapture] = useState(null); // { winner, sinceTurn } -- for holdTurn mode
+            const [playerGoesSecondThisRound, setPlayerGoesSecondThisRound] = useState(false);
 
             const [map, setMap] = useState(() => generateMap(NEST_LAYOUTS.aligned.ant, NEST_LAYOUTS.aligned.rival));
             const mapRef = useRef(map);
@@ -615,6 +747,14 @@
             const [hand, setHand] = useState(() => [drawCard(), drawCard(), drawCard()]);
             const handRef = useRef(hand);
             useEffect(() => { handRef.current = hand; }, [hand]);
+
+            // Round-transition functions call each other in a cycle (finishRivalTurn ->
+            // beginRound -> triggerRivalFirstTurn -> finishRivalTurn), which JS can't
+            // resolve via normal declaration order. Refs break the cycle cleanly.
+            const finishRivalTurnRef = useRef(() => {});
+            const beginRoundRef = useRef(() => {});
+            const triggerRivalFirstTurnRef = useRef(() => {});
+            const proceedToEnemyTurnRef = useRef(() => {});
 
             const [selectedCard, setSelectedCard] = useState(null);
             const [moveSource, setMoveSource] = useState(null);
@@ -1046,17 +1186,30 @@
                 setMustDiscard(false);
                 setHand(toppedHand);
                 setHistory([]); // undo only applies within the turn just starting
+                setPhase('planning');
                 addLog(`> Turn ${turnNumber}: ${cap} eggs, 1 card + 1 move`);
             }, [addLog, playerTribeKey]);
 
-            // ---- Finish the Rival's turn: reinforce step, leftover-egg dump, then hand back to the player ----
-            const finishRivalTurn = useCallback((workMap, wResources) => {
+            // ---- Kick off a new round: whoever's turn it is to go first this round acts ----
+            const beginRound = useCallback((currentMap, turnNumber, capBonus) => {
+                const first = firstMoverThisRound(turnNumber, settings);
+                if (first === 'ANT') {
+                    setPlayerGoesSecondThisRound(false);
+                    startPlayerTurn(currentMap, turnNumber, capBonus);
+                } else {
+                    setPlayerGoesSecondThisRound(true);
+                    triggerRivalFirstTurnRef.current(currentMap, turnNumber, capBonus);
+                }
+            }, [settings.alternatingFirstPlayer, startPlayerTurn]);
+            useEffect(() => { beginRoundRef.current = beginRound; }, [beginRound]);
+
+            // ---- Finish the Rival's turn: reinforce step, leftover-egg dump, then either hand
+            // back to the player (same round, if Rival went first) or advance to the next round
+            // (if Rival went second, the normal case) ----
+            const finishRivalTurn = useCallback((workMap, wResources, turnNumber, capBonusForPlayer, rivalWentFirst) => {
                 const rivalProfile = TRIBE_CONFIGS[rivalTribeKey];
                 const finalMap = workMap.map(t => ({ ...t }));
 
-                // Smart mode: reinforce whichever tile is actually under threat (a stronger Ant
-                // tile sits next door) -- biggest deficit first. Original mode always just
-                // reinforces the globally weakest Rival tile, threat or not.
                 const rivalTileList = finalMap
                     .map((t, i) => ({ t, i }))
                     .filter(({ t }) => t.tribe.name === 'RIVAL');
@@ -1097,20 +1250,22 @@
                 }
 
                 setMap(finalMap);
-                const nextTurn = turn + 1;
-                setTurn(nextTurn);
-                startPlayerTurn(finalMap, nextTurn, bonusCapNextTurn);
-                setPhase('planning');
-            }, [turn, bonusCapNextTurn, settings.smartAI, rivalTribeKey, addLog, startPlayerTurn]);
 
+                if (rivalWentFirst) {
+                    // Round isn't over -- hand control to the player for their turn, same round number
+                    startPlayerTurn(finalMap, turnNumber, capBonusForPlayer);
+                } else {
+                    // Round complete -- advance to the next one
+                    const nextTurn = turnNumber + 1;
+                    setTurn(nextTurn);
+                    beginRoundRef.current(finalMap, nextTurn, capBonusForPlayer);
+                }
+            }, [settings.smartAI, rivalTribeKey, addLog, startPlayerTurn]);
+            useEffect(() => { finishRivalTurnRef.current = finishRivalTurn; }, [finishRivalTurn]);
+
+            // ---- Rival goes SECOND this round (normal flow, triggered by the player ending their turn) ----
             const proceedToEnemyTurn = useCallback(() => {
                 if (gameOver) return;
-
-                if (settings.workerBanking && workerPlayedThisTurn && resources > 0) {
-                    setBonusCapNextTurn(b => b + resources);
-                    addLog(`> 🐛 Worker banks ${resources} leftover egg${resources > 1 ? 's' : ''} for next turn!`);
-                }
-
                 setPhase('enemy_turn');
                 setSelectedCard(null);
                 setMoveSource(null);
@@ -1118,141 +1273,53 @@
                 setDumpSource(null);
                 addLog('> Rival turn...');
 
+                const turnNumber = turn;
+                const capBonus = bonusCapNextTurn;
                 setTimeout(() => {
-                    let workMap = mapRef.current.map(t => t.tribe.name === 'RIVAL' ? { ...t, webbed: false } : { ...t });
-
                     const rivalProfile = TRIBE_CONFIGS[rivalTribeKey];
-                    let wResources = capForTurn(turn);
-                    const spawnNow = shouldSpawn(rivalProfile, turn);
-
-                    if (spawnNow) {
-                        workMap = workMap.map(t =>
-                            (t.tribe.name === 'RIVAL' && t.type === TERRITORY_TYPES.NEST)
-                                ? { ...t, units: t.units + rivalProfile.spawnPower }
-                                : t
-                        );
-                        addLog(`> Rival nest surges! +${rivalProfile.spawnPower} units.`);
-                    }
-
-                    const rivalTiles = () => workMap
-                        .map((t, i) => ({ t, i }))
-                        .filter(({ t }) => t.tribe.name === 'RIVAL' && t.units > 0 && !t.webbed);
-
-                    // The "move": attack, else expand. Resolves immediately -- your defense is
-                    // repositioning with your own move. Smart mode picks the most valuable
-                    // target we can beat (Nest first, then the biggest tower); original mode
-                    // just takes the first winnable attack it happens to find.
-                    let moved = false;
-                    if (settings.smartAI) {
-                        const attackOptions = [];
-                        for (const { t, i } of rivalTiles()) {
-                            for (const n of neighbors(i)) {
-                                if (workMap[n].tribe.name !== 'ANT') continue;
-                                const defenderBonus = (workMap[n].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, n, 'ANT')
-                                    + (workMap[n].type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
-                                const effDefense = workMap[n].units + defenderBonus;
-                                if (t.units > effDefense) {
-                                    attackOptions.push({
-                                        attackerIdx: i, targetIdx: n, power: t.units, effDefense,
-                                        isNest: workMap[n].type === TERRITORY_TYPES.NEST,
-                                        defenderBonus,
-                                    });
-                                }
-                            }
-                        }
-                        if (attackOptions.length > 0) {
-                            attackOptions.sort((a, b) => {
-                                if (a.isNest !== b.isNest) return a.isNest ? -1 : 1; // Nest capture always wins priority
-                                return b.effDefense - a.effDefense; // otherwise, knock down the biggest tower first
-                            });
-                            const atk = attackOptions[0];
-                            workMap[atk.targetIdx] = { ...workMap[atk.targetIdx], tribe: TRIBES.RIVAL, units: Math.max(atk.power - atk.effDefense, 1), trait: null };
-                            workMap[atk.attackerIdx] = { ...workMap[atk.attackerIdx], units: 0, trait: null };
-                            let cleaveMsg = '';
-                            if (rivalProfile.dumpType === 'cleave' && wResources >= rivalProfile.dumpCost) {
-                                wResources -= rivalProfile.dumpCost;
-                                const splashed = applyCleave(workMap, atk.targetIdx, 'RIVAL');
-                                if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
-                            }
-                            addLog(atk.isNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${atk.defenderBonus ? ' (broke your fortification)' : ''}${cleaveMsg}`);
-                            moved = true;
-                        }
-                    } else {
-                        for (const { t, i } of rivalTiles()) {
-                            const target = neighbors(i).find(n => workMap[n].tribe.name === 'ANT' && workMap[n].units < t.units);
-                            if (target !== undefined) {
-                                const send = t.units;
-                                const defenderBonus = (workMap[target].trait === 'fortified' ? 1 : 0) + auraBonus(workMap, target, 'ANT')
-                                    + (workMap[target].type === TERRITORY_TYPES.NEST ? NEST_GARRISON_LEVELS[settings.nestGarrison].bonus : 0);
-                                const effDefense = workMap[target].units + defenderBonus;
-                                const capturedNest = workMap[target].type === TERRITORY_TYPES.NEST;
-                                workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
-                                workMap[i] = { ...t, units: 0, trait: null };
-                                let cleaveMsg = '';
-                                if (rivalProfile.dumpType === 'cleave' && wResources >= rivalProfile.dumpCost) {
-                                    wResources -= rivalProfile.dumpCost;
-                                    const splashed = applyCleave(workMap, target, 'RIVAL');
-                                    if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
-                                }
-                                addLog(capturedNest ? '> Rival captured YOUR nest!' : `> Rival attacked and won!${defenderBonus ? ' (broke your fortification)' : ''}${cleaveMsg}`);
-                                moved = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (!moved) {
-                        if (settings.smartAI) {
-                            // Advance toward whichever Ant tile is closest to threatening our Nest,
-                            // instead of just grabbing the first empty tile found.
-                            const antTiles = workMap
-                                .map((t, i) => ({ t, i }))
-                                .filter(({ t }) => t.tribe.name === 'ANT');
-
-                            if (antTiles.length > 0) {
-                                const distToRivalNest = bfsDistances(nestIndices.rival);
-                                const threat = antTiles.sort((a, b) => distToRivalNest[a.i] - distToRivalNest[b.i])[0];
-                                const distToThreat = bfsDistances(threat.i);
-
-                                let bestExpand = null;
-                                for (const { t, i } of rivalTiles()) {
-                                    for (const n of neighbors(i)) {
-                                        if (workMap[n].tribe.name === 'NEUTRAL') {
-                                            const d = distToThreat[n];
-                                            if (!bestExpand || d < bestExpand.d) bestExpand = { i, target: n, d, units: t.units };
-                                        }
-                                    }
-                                }
-
-                                if (bestExpand) {
-                                    workMap[bestExpand.target] = { ...workMap[bestExpand.target], tribe: TRIBES.RIVAL, units: bestExpand.units, trait: null };
-                                    workMap[bestExpand.i] = { ...workMap[bestExpand.i], units: 0, trait: null };
-                                    addLog('> Rival advances toward your forces!');
-                                    moved = true;
-                                }
-                            }
-                        }
-
-                        if (!moved) {
-                            for (const { t, i } of rivalTiles()) {
-                                const target = neighbors(i).find(n => workMap[n].tribe.name === 'NEUTRAL');
-                                if (target !== undefined) {
-                                    const send = t.units;
-                                    workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: send, trait: null };
-                                    workMap[i] = { ...t, units: 0, trait: null };
-                                    addLog('> Rival expanded territory!');
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    finishRivalTurn(workMap, wResources);
+                    const { workMap, wResources } = runRivalMoveAndSpawn(mapRef.current, turnNumber, rivalProfile, nestIndices, settings, addLog);
+                    finishRivalTurnRef.current(workMap, wResources, turnNumber, capBonus, false);
                 }, 700);
-            }, [gameOver, turn, settings.smartAI, settings.nestGarrison, settings.workerBanking, workerPlayedThisTurn, resources, nestIndices, rivalTribeKey, addLog, finishRivalTurn]);
+            }, [gameOver, turn, bonusCapNextTurn, settings, nestIndices, rivalTribeKey, addLog]);
+            useEffect(() => { proceedToEnemyTurnRef.current = proceedToEnemyTurn; }, [proceedToEnemyTurn]);
 
-            // Ref so onCardClick's discard branch can trigger the enemy turn without a stale closure
-            const startEnemyTurnRef = useRef(proceedToEnemyTurn);
-            useEffect(() => { startEnemyTurnRef.current = proceedToEnemyTurn; }, [proceedToEnemyTurn]);
+            // ---- Rival goes FIRST this round (automatic, no player input -- alternating-turn-order mode) ----
+            const triggerRivalFirstTurn = useCallback((currentMap, turnNumber, capBonus) => {
+                if (gameOver) return;
+                setPhase('enemy_turn');
+                addLog(`> ⚡ Rival acts first this round (turn ${turnNumber})...`);
+
+                setTimeout(() => {
+                    const rivalProfile = TRIBE_CONFIGS[rivalTribeKey];
+                    const { workMap, wResources } = runRivalMoveAndSpawn(currentMap, turnNumber, rivalProfile, nestIndices, settings, addLog);
+                    finishRivalTurnRef.current(workMap, wResources, turnNumber, capBonus, true);
+                }, 700);
+            }, [gameOver, settings, nestIndices, rivalTribeKey, addLog]);
+            useEffect(() => { triggerRivalFirstTurnRef.current = triggerRivalFirstTurn; }, [triggerRivalFirstTurn]);
+
+            // ---- Player ends their turn: either Rival still needs to go (normal), or Rival
+            // already went first this round and we should skip straight to the next round ----
+            const endPlayerTurn = useCallback(() => {
+                let carryBonus = bonusCapNextTurn;
+                if (settings.workerBanking && workerPlayedThisTurn && resources > 0) {
+                    carryBonus += resources;
+                    setBonusCapNextTurn(carryBonus);
+                    addLog(`> 🐛 Worker banks ${resources} leftover egg${resources > 1 ? 's' : ''} for next turn!`);
+                }
+
+                if (playerGoesSecondThisRound) {
+                    const nextTurn = turn + 1;
+                    setTurn(nextTurn);
+                    setPhase('enemy_turn');
+                    beginRoundRef.current(mapRef.current, nextTurn, carryBonus);
+                } else {
+                    proceedToEnemyTurnRef.current();
+                }
+            }, [bonusCapNextTurn, settings.workerBanking, workerPlayedThisTurn, resources, playerGoesSecondThisRound, turn, addLog]);
+
+            // Ref so onCardClick's discard branch can end the turn without a stale closure
+            const startEnemyTurnRef = useRef(endPlayerTurn);
+            useEffect(() => { startEnemyTurnRef.current = endPlayerTurn; }, [endPlayerTurn]);
 
             const onEndTurnClick = useCallback(() => {
                 if (gameOver || phase !== 'planning') return;
@@ -1265,8 +1332,8 @@
                     return;
                 }
 
-                proceedToEnemyTurn();
-            }, [gameOver, phase, cardPlayedThisTurn, proceedToEnemyTurn, addLog]);
+                endPlayerTurn();
+            }, [gameOver, phase, cardPlayedThisTurn, endPlayerTurn, addLog]);
 
             // Win check: three testable modes -- instant capture, capture-and-hold, or annihilation
             useEffect(() => {
@@ -1350,6 +1417,7 @@
                 setAbilityArmed(false);
                 setWorkerPlayedThisTurn(false);
                 setMustDiscard(false);
+                setPlayerGoesSecondThisRound(false);
                 setCardPlayAvailable(true);
                 setMoveAvailable(false); // first player doesn't get a move on turn 1
                 setCardPlayedThisTurn(false);
@@ -1580,6 +1648,24 @@
                                         onClick={() => setSettings(s => ({ ...s, workerBanking: false }))}
                                     >
                                         Off — unspent eggs are always lost at end of turn, Worker only gives its flat +1
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Turn Order</div>
+                                <div className="settings-options">
+                                    <button
+                                        className={'control-btn' + (settings.alternatingFirstPlayer ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, alternatingFirstPlayer: true }))}
+                                    >
+                                        Alternating — whoever went second last round goes first this round (sequence: You/Rival, Rival/You, You/Rival... so whoever's due gets two turns in a row)
+                                    </button>
+                                    <button
+                                        className={'control-btn' + (!settings.alternatingFirstPlayer ? ' selected-setting' : '')}
+                                        onClick={() => setSettings(s => ({ ...s, alternatingFirstPlayer: false }))}
+                                    >
+                                        Fixed — you always go first, every round
                                     </button>
                                 </div>
                             </div>
