@@ -591,7 +591,19 @@
         };
 
         // Slow resource growth: +1 cap every OTHER turn, caps at 4 (plus any Worker bonus)
-        const capForTurn = (turnNumber) => Math.min(1 + Math.floor((turnNumber - 1) / 2), 4);
+        // Resource cap growth presets (sim-tested). Glacial resolves games faster AND
+        // more decisively than the old "current" pace despite growing slower -- raising
+        // the ceiling makes stalemates worse, but slowing the rate to the same ceiling
+        // doesn't; the extra early turns apparently matter more than reaching 4 sooner.
+        const RESOURCE_CURVES = {
+            current: { growEvery: 2, maxCap: 4, label: 'Current', desc: '+1 cap every other turn, maxes out turn 7' },
+            slow: { growEvery: 3, maxCap: 4, label: 'Slow', desc: '+1 cap every 3rd turn, maxes out turn 10' },
+            glacial: { growEvery: 4, maxCap: 4, label: 'Glacial (recommended)', desc: '+1 cap every 4th turn, maxes out turn 13 -- sim-tested as the best pace' },
+        };
+        const capForTurn = (turnNumber, curveKey) => {
+            const { growEvery, maxCap } = RESOURCE_CURVES[curveKey || 'glacial'];
+            return Math.min(1 + Math.floor((turnNumber - 1) / growEvery), maxCap);
+        };
 
         // Who acts first this round. Normally Ant always goes first. When alternating is
         // on, whoever went second last round goes first this round -- so the sequence
@@ -607,7 +619,7 @@
         // many eggs are left for the reinforce/dump step that follows.
         function runRivalMoveAndSpawn(inputMap, turnNumber, rivalProfile, nestIndices, settings, addLog) {
             let workMap = inputMap.map(t => t.tribe.name === 'RIVAL' ? { ...t, webbed: false } : { ...t });
-            let wResources = capForTurn(turnNumber);
+            let wResources = capForTurn(turnNumber, settings.resourceCurve);
             const spawnNow = shouldSpawn(rivalProfile, turnNumber);
 
             if (spawnNow) {
@@ -733,6 +745,7 @@
                 nestGarrison: 'single',
                 workerBanking: true,
                 alternatingFirstPlayer: true,
+                resourceCurve: 'glacial',
             });
             const [nestIndices, setNestIndices] = useState(NEST_LAYOUTS.aligned);
             const [playerTribeKey, setPlayerTribeKey] = useState(DEFAULT_TRIBE_KEY);
@@ -1159,7 +1172,7 @@
 
             // ---- Turn management ----
             const startPlayerTurn = useCallback((currentMap, turnNumber, capBonus) => {
-                const cap = capForTurn(turnNumber) + capBonus;
+                const cap = capForTurn(turnNumber, settings.resourceCurve) + capBonus;
                 const playerProfile = TRIBE_CONFIGS[playerTribeKey];
                 const spawnNow = shouldSpawn(playerProfile, turnNumber);
 
@@ -1188,7 +1201,7 @@
                 setHistory([]); // undo only applies within the turn just starting
                 setPhase('planning');
                 addLog(`> Turn ${turnNumber}: ${cap} eggs, 1 card + 1 move`);
-            }, [addLog, playerTribeKey]);
+            }, [addLog, playerTribeKey, settings.resourceCurve]);
 
             // ---- Kick off a new round: whoever's turn it is to go first this round acts ----
             const beginRound = useCallback((currentMap, turnNumber, capBonus) => {
@@ -1422,8 +1435,8 @@
                 setMoveAvailable(false); // first player doesn't get a move on turn 1
                 setCardPlayedThisTurn(false);
                 setBonusCapNextTurn(0);
-                setResourceCap(capForTurn(1));
-                setResources(capForTurn(1));
+                setResourceCap(capForTurn(1, settings.resourceCurve));
+                setResources(capForTurn(1, settings.resourceCurve));
                 setTurn(1);
                 const winConditionMsg = settings.winCondition === 'annihilation'
                     ? 'Wipe out every Rival tile to win.'
@@ -1667,6 +1680,21 @@
                                     >
                                         Fixed — you always go first, every round
                                     </button>
+                                </div>
+                            </div>
+
+                            <div className="settings-section">
+                                <div className="settings-title">Resource Curve</div>
+                                <div className="settings-options">
+                                    {Object.entries(RESOURCE_CURVES).map(([key, curve]) => (
+                                        <button
+                                            key={key}
+                                            className={'control-btn' + (settings.resourceCurve === key ? ' selected-setting' : '')}
+                                            onClick={() => setSettings(s => ({ ...s, resourceCurve: key }))}
+                                        >
+                                            {curve.label} — {curve.desc}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
 
