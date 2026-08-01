@@ -477,6 +477,56 @@
         const DEFAULT_TRIBE_KEY = 'ANT';
         const shouldSpawn = (profile, turnNumber) => turnNumber % profile.spawnEvery === 0;
 
+        const DEFAULT_SETTINGS = {
+            smartAI: true,
+            summoningSickness: true,
+            nestLayout: 'aligned',
+            winCondition: 'instant',
+            nestGarrison: 'single',
+            workerBanking: true,
+            alternatingFirstPlayer: true,
+            resourceCurve: 'glacial',
+        };
+
+        // Shareable config links: encode the current settings + tribe matchup into a
+        // short query string so playtesters can send each other a link that opens
+        // straight into a specific configuration instead of clicking through the
+        // settings screen by hand.
+        function buildShareUrl(settings, playerTribeKey, rivalTribeKey) {
+            const p = new URLSearchParams();
+            p.set('sa', settings.smartAI ? '1' : '0');
+            p.set('ss', settings.summoningSickness ? '1' : '0');
+            p.set('nl', settings.nestLayout);
+            p.set('wc', settings.winCondition);
+            p.set('ng', settings.nestGarrison);
+            p.set('wb', settings.workerBanking ? '1' : '0');
+            p.set('af', settings.alternatingFirstPlayer ? '1' : '0');
+            p.set('rc', settings.resourceCurve);
+            p.set('pt', playerTribeKey);
+            p.set('rt', rivalTribeKey);
+            return `${window.location.origin}${window.location.pathname}?${p.toString()}`;
+        }
+
+        function parseSharedConfig() {
+            const p = new URLSearchParams(window.location.search);
+            if ([...p.keys()].length === 0) return null;
+            return {
+                settings: {
+                    smartAI: p.get('sa') !== '0',
+                    summoningSickness: p.get('ss') !== '0',
+                    nestLayout: p.get('nl') || DEFAULT_SETTINGS.nestLayout,
+                    winCondition: p.get('wc') || DEFAULT_SETTINGS.winCondition,
+                    nestGarrison: p.get('ng') || DEFAULT_SETTINGS.nestGarrison,
+                    workerBanking: p.get('wb') !== '0',
+                    alternatingFirstPlayer: p.get('af') !== '0',
+                    resourceCurve: p.get('rc') || DEFAULT_SETTINGS.resourceCurve,
+                },
+                playerTribeKey: p.get('pt') || DEFAULT_TRIBE_KEY,
+                rivalTribeKey: p.get('rt') || DEFAULT_TRIBE_KEY,
+            };
+        }
+        const sharedConfigOnLoad = (typeof window !== 'undefined') ? parseSharedConfig() : null;
+
         // Icon is intentionally NOT baked in here -- it depends on which tribe the player
         // picks at runtime, so it's computed fresh wherever a tile is displayed instead.
         const TRIBES = {
@@ -488,6 +538,71 @@
         const NEST_EMOJI = '🪺';
 
         const TERRITORY_TYPES = { NEST: 'NEST', GROUND: 'GROUND' };
+
+        // ---- Async "play by link" multiplayer ----
+        // Two humans alternate control by passing a URL back and forth. Rather than
+        // building a second parallel card/resource economy for the Rival side, we
+        // relabel the board at each handoff (your tiles become RIVAL, theirs become
+        // ANT) and swap which tribe key is "yours" -- the existing player-facing UI
+        // then just works unmodified for whoever currently holds the ANT label.
+        // Only the Worker-banking bonus needs to persist per-side across a handoff
+        // (everything else already resets fresh via startPlayerTurn).
+
+        const swapMapPerspective = (map) => map.map(t => {
+            if (t.tribe.name === 'ANT') return { ...t, tribe: TRIBES.RIVAL };
+            if (t.tribe.name === 'RIVAL') return { ...t, tribe: TRIBES.ANT };
+            return t;
+        });
+
+        function encodeMultiplayerLink(payload) {
+            const compactMap = payload.map.map(t => ({
+                o: t.tribe.name === 'ANT' ? 'a' : t.tribe.name === 'RIVAL' ? 'r' : 'n',
+                ty: t.type === TERRITORY_TYPES.NEST ? 'N' : 'G',
+                u: t.units,
+                tr: t.trait || '',
+                w: t.webbed ? 1 : 0,
+            }));
+            const json = JSON.stringify({
+                m: compactMap,
+                t: payload.turn,
+                pt: payload.playerTribeKey,
+                rt: payload.rivalTribeKey,
+                b: payload.bonusForActiveSide,
+                rb: payload.bonusForInactiveSide,
+                s: payload.settings,
+                ni: payload.nestIndices,
+                pc: payload.pendingCapture,
+                log: payload.logTail,
+            });
+            const b64 = btoa(unescape(encodeURIComponent(json)));
+            return `${window.location.origin}${window.location.pathname}?mp=${encodeURIComponent(b64)}`;
+        }
+
+        function parseMultiplayerLink() {
+            const p = new URLSearchParams(window.location.search);
+            const raw = p.get('mp');
+            if (!raw) return null;
+            try {
+                const json = decodeURIComponent(escape(atob(decodeURIComponent(raw))));
+                const data = JSON.parse(json);
+                const map = data.m.map((t, i) => ({
+                    id: i,
+                    type: t.ty === 'N' ? TERRITORY_TYPES.NEST : TERRITORY_TYPES.GROUND,
+                    tribe: t.o === 'a' ? TRIBES.ANT : t.o === 'r' ? TRIBES.RIVAL : TRIBES.NEUTRAL,
+                    units: t.u,
+                    trait: t.tr || null,
+                    webbed: !!t.w,
+                }));
+                return {
+                    map, turn: data.t, playerTribeKey: data.pt, rivalTribeKey: data.rt,
+                    bonusForActiveSide: data.b, bonusForInactiveSide: data.rb,
+                    settings: data.s, nestIndices: data.ni, pendingCapture: data.pc, logTail: data.log || [],
+                };
+            } catch (err) {
+                return null; // malformed/corrupted link -- fall back to the normal menu
+            }
+        }
+        const multiplayerLinkOnLoad = (typeof window !== 'undefined') ? parseMultiplayerLink() : null;
 
         const DUMP_DESCRIPTIONS = {
             generate: 'Surge Growth: needs 3+ unspent eggs saved up. Converts ALL of it into bonus units at your Nest, right now. A late-game payoff for a turn you didn\'t spend on cards.',
@@ -736,24 +851,37 @@
         }
 
         const ColonyWars = () => {
-            const [screen, setScreen] = useState('menu'); // 'menu' | 'settings' | 'game'
-            const [settings, setSettings] = useState({
-                smartAI: true,
-                summoningSickness: true,
-                nestLayout: 'aligned',
-                winCondition: 'instant',
-                nestGarrison: 'single',
-                workerBanking: true,
-                alternatingFirstPlayer: true,
-                resourceCurve: 'glacial',
-            });
-            const [nestIndices, setNestIndices] = useState(NEST_LAYOUTS.aligned);
-            const [playerTribeKey, setPlayerTribeKey] = useState(DEFAULT_TRIBE_KEY);
-            const [rivalTribeKey, setRivalTribeKey] = useState(DEFAULT_TRIBE_KEY);
-            const [pendingCapture, setPendingCapture] = useState(null); // { winner, sinceTurn } -- for holdTurn mode
+            const [screen, setScreen] = useState(multiplayerLinkOnLoad ? 'game' : 'menu'); // 'menu' | 'settings' | 'game'
+            const [settings, setSettings] = useState(
+                multiplayerLinkOnLoad ? multiplayerLinkOnLoad.settings
+                    : sharedConfigOnLoad ? sharedConfigOnLoad.settings
+                        : { ...DEFAULT_SETTINGS }
+            );
+            const [nestIndices, setNestIndices] = useState(
+                multiplayerLinkOnLoad ? multiplayerLinkOnLoad.nestIndices
+                    : NEST_LAYOUTS[(sharedConfigOnLoad && sharedConfigOnLoad.settings.nestLayout) || 'aligned']
+            );
+            const [playerTribeKey, setPlayerTribeKey] = useState(
+                multiplayerLinkOnLoad ? multiplayerLinkOnLoad.playerTribeKey
+                    : sharedConfigOnLoad ? sharedConfigOnLoad.playerTribeKey : DEFAULT_TRIBE_KEY
+            );
+            const [rivalTribeKey, setRivalTribeKey] = useState(
+                multiplayerLinkOnLoad ? multiplayerLinkOnLoad.rivalTribeKey
+                    : sharedConfigOnLoad ? sharedConfigOnLoad.rivalTribeKey : DEFAULT_TRIBE_KEY
+            );
+            const [pendingCapture, setPendingCapture] = useState(multiplayerLinkOnLoad ? multiplayerLinkOnLoad.pendingCapture : null);
+            const [shareLinkCopied, setShareLinkCopied] = useState(false);
+            const [asyncMode, setAsyncMode] = useState(!!multiplayerLinkOnLoad);
+            const [rivalBonusCapNextTurn, setRivalBonusCapNextTurn] = useState(multiplayerLinkOnLoad ? multiplayerLinkOnLoad.bonusForInactiveSide : 0);
+            const [awaitingHandoff, setAwaitingHandoff] = useState(false);
+            const [handoffLink, setHandoffLink] = useState('');
+            const [handoffLinkCopied, setHandoffLinkCopied] = useState(false);
+            const [shareLinkText, setShareLinkText] = useState('');
             const [playerGoesSecondThisRound, setPlayerGoesSecondThisRound] = useState(false);
 
-            const [map, setMap] = useState(() => generateMap(NEST_LAYOUTS.aligned.ant, NEST_LAYOUTS.aligned.rival));
+            const [map, setMap] = useState(() =>
+                multiplayerLinkOnLoad ? multiplayerLinkOnLoad.map : generateMap(NEST_LAYOUTS.aligned.ant, NEST_LAYOUTS.aligned.rival)
+            );
             const mapRef = useRef(map);
             useEffect(() => { mapRef.current = map; }, [map]);
 
@@ -780,11 +908,15 @@
             const [summonedTileThisTurn, setSummonedTileThisTurn] = useState(null);
             const [abilityArmed, setAbilityArmed] = useState(false); // Bee's Extend Wings / Beetle's Arm Cleave, spent by your next move this turn
             const [workerPlayedThisTurn, setWorkerPlayedThisTurn] = useState(false); // gates egg-banking at end of turn
-            const [bonusCapNextTurn, setBonusCapNextTurn] = useState(0);
+            const [bonusCapNextTurn, setBonusCapNextTurn] = useState(multiplayerLinkOnLoad ? multiplayerLinkOnLoad.bonusForActiveSide : 0);
             const [resourceCap, setResourceCap] = useState(capForTurn(1));
             const [resources, setResources] = useState(capForTurn(1));
-            const [turn, setTurn] = useState(1);
-            const [gameLog, setGameLog] = useState(['=== COLONY WARS ===', 'Capture the enemy Nest to win.', 'Turn 1: card only -- no move (first-turn balance).']);
+            const [turn, setTurn] = useState(multiplayerLinkOnLoad ? multiplayerLinkOnLoad.turn : 1);
+            const [gameLog, setGameLog] = useState(
+                multiplayerLinkOnLoad
+                    ? [...(multiplayerLinkOnLoad.logTail || []), '=== Your turn -- picking up where they left off ===']
+                    : ['=== COLONY WARS ===', 'Capture the enemy Nest to win.', 'Turn 1: card only -- no move (first-turn balance).']
+            );
             const logRef = useRef(null);
             useEffect(() => {
                 if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -1203,6 +1335,16 @@
                 addLog(`> Turn ${turnNumber}: ${cap} eggs, 1 card + 1 move`);
             }, [addLog, playerTribeKey, settings.resourceCurve]);
 
+            // On mount, if we loaded from a multiplayer handoff link, kick off the
+            // resumed player's turn (spawn, hand draw, resource cap) exactly once.
+            const startedFromLinkRef = useRef(false);
+            useEffect(() => {
+                if (multiplayerLinkOnLoad && !startedFromLinkRef.current) {
+                    startedFromLinkRef.current = true;
+                    startPlayerTurn(multiplayerLinkOnLoad.map, multiplayerLinkOnLoad.turn, multiplayerLinkOnLoad.bonusForActiveSide);
+                }
+            }, [startPlayerTurn]);
+
             // ---- Kick off a new round: whoever's turn it is to go first this round acts ----
             const beginRound = useCallback((currentMap, turnNumber, capBonus) => {
                 const first = firstMoverThisRound(turnNumber, settings);
@@ -1330,9 +1472,57 @@
                 }
             }, [bonusCapNextTurn, settings.workerBanking, workerPlayedThisTurn, resources, playerGoesSecondThisRound, turn, addLog]);
 
+            // ---- End turn in "play by link" mode: swap board perspective, encode a
+            // handoff link, and stop -- the other person continues on their own device
+            // (or you can hit Continue Here to keep going on this one) ----
+            const endTurnAsync = useCallback(() => {
+                let carryBonus = bonusCapNextTurn;
+                if (settings.workerBanking && workerPlayedThisTurn && resources > 0) {
+                    carryBonus += resources;
+                    addLog(`> 🐛 Banked ${resources} eggs for your next turn.`);
+                }
+
+                const swappedMap = swapMapPerspective(mapRef.current);
+                const nextTurn = turn + 1;
+                const newPlayerTribeKey = rivalTribeKey;   // whoever was Rival is now the active, ANT-labeled side
+                const newRivalTribeKey = playerTribeKey;
+                const newActiveBonus = rivalBonusCapNextTurn; // the other side's stored bonus is now theirs to use
+                const newInactiveBonus = carryBonus;          // your bonus persists, relabeled, for your eventual next turn
+                const swappedPending = pendingCapture
+                    ? { ...pendingCapture, winner: pendingCapture.winner === 'ANT' ? 'RIVAL' : 'ANT' }
+                    : null;
+
+                const link = encodeMultiplayerLink({
+                    map: swappedMap,
+                    turn: nextTurn,
+                    playerTribeKey: newPlayerTribeKey,
+                    rivalTribeKey: newRivalTribeKey,
+                    bonusForActiveSide: newActiveBonus,
+                    bonusForInactiveSide: newInactiveBonus,
+                    settings,
+                    nestIndices,
+                    pendingCapture: swappedPending,
+                    logTail: gameLog.slice(-4),
+                });
+
+                setPlayerTribeKey(newPlayerTribeKey);
+                setRivalTribeKey(newRivalTribeKey);
+                setRivalBonusCapNextTurn(newInactiveBonus);
+                setPendingCapture(swappedPending);
+                setTurn(nextTurn);
+                setHandoffLink(link);
+                setHandoffLinkCopied(false);
+                setAwaitingHandoff(true);
+                setPhase('enemy_turn'); // locks the board from further input until handoff completes
+            }, [bonusCapNextTurn, settings, workerPlayedThisTurn, resources, turn, rivalTribeKey, playerTribeKey, rivalBonusCapNextTurn, pendingCapture, nestIndices, gameLog, addLog]);
+
+            const finishTurn = useCallback(() => {
+                if (asyncMode) endTurnAsync(); else endPlayerTurn();
+            }, [asyncMode, endTurnAsync, endPlayerTurn]);
+
             // Ref so onCardClick's discard branch can end the turn without a stale closure
-            const startEnemyTurnRef = useRef(endPlayerTurn);
-            useEffect(() => { startEnemyTurnRef.current = endPlayerTurn; }, [endPlayerTurn]);
+            const startEnemyTurnRef = useRef(finishTurn);
+            useEffect(() => { startEnemyTurnRef.current = finishTurn; }, [finishTurn]);
 
             const onEndTurnClick = useCallback(() => {
                 if (gameOver || phase !== 'planning') return;
@@ -1345,8 +1535,8 @@
                     return;
                 }
 
-                endPlayerTurn();
-            }, [gameOver, phase, cardPlayedThisTurn, endPlayerTurn, addLog]);
+                finishTurn();
+            }, [gameOver, phase, cardPlayedThisTurn, finishTurn, addLog]);
 
             // Win check: three testable modes -- instant capture, capture-and-hold, or annihilation
             useEffect(() => {
@@ -1449,6 +1639,38 @@
                 setWinner(null);
                 setPendingCapture(null);
                 setHistory([]);
+                setRivalBonusCapNextTurn(0);
+                setAwaitingHandoff(false);
+                setHandoffLink('');
+                setHandoffLinkCopied(false);
+            };
+
+            const copyShareLink = async () => {
+                const url = buildShareUrl(settings, playerTribeKey, rivalTribeKey);
+                try {
+                    await navigator.clipboard.writeText(url);
+                    setShareLinkCopied(true);
+                    setShareLinkText('');
+                    setTimeout(() => setShareLinkCopied(false), 2500);
+                } catch (err) {
+                    // Clipboard API blocked (common outside HTTPS/localhost) -- show the
+                    // link as selectable text so it can still be copied by hand.
+                    setShareLinkText(url);
+                }
+            };
+
+            const copyHandoffLink = async () => {
+                try {
+                    await navigator.clipboard.writeText(handoffLink);
+                    setHandoffLinkCopied(true);
+                    setTimeout(() => setHandoffLinkCopied(false), 2500);
+                } catch (err) {
+                    // Fallback handled by the always-visible selectable text below the button
+                }
+            };
+
+            const continueLocally = () => {
+                window.location.href = handoffLink; // full reload -- re-parses the link fresh, same as opening it on a second device
             };
 
             const lastLogLine = gameLog[gameLog.length - 1] || '';
@@ -1531,9 +1753,16 @@
                             <button
                                 className="control-btn confirm"
                                 style={{ width: '100%', padding: '16px' }}
-                                onClick={() => { resetGame(); setScreen('game'); }}
+                                onClick={() => { setAsyncMode(false); resetGame(); setScreen('game'); }}
                             >
-                                ▶ Start Game
+                                ▶ Start Game (vs AI)
+                            </button>
+                            <button
+                                className="control-btn confirm"
+                                style={{ width: '100%', padding: '14px' }}
+                                onClick={() => { setAsyncMode(true); resetGame(); setScreen('game'); }}
+                            >
+                                🌐 Play by Link (vs a friend)
                             </button>
                             <button
                                 className="control-btn"
@@ -1544,6 +1773,17 @@
                             </button>
 
                             <div className="info-text">Matchup: {TRIBE_CONFIGS[playerTribeKey].emoji} {playerTribeKey} vs {TRIBE_CONFIGS[rivalTribeKey].emoji} {rivalTribeKey} ⋅ {settings.smartAI ? 'Smart' : 'Original'} AI ⋅ Sickness {settings.summoningSickness ? 'On' : 'Off'} ⋅ {NEST_LAYOUTS[settings.nestLayout].label} nests ⋅ {settings.winCondition} win ⋅ {NEST_GARRISON_LEVELS[settings.nestGarrison].label} ⋅ Banking {settings.workerBanking ? 'On' : 'Off'}</div>
+
+                            <button
+                                className="control-btn"
+                                style={{ width: '100%' }}
+                                onClick={copyShareLink}
+                            >
+                                {shareLinkCopied ? '✓ Link copied!' : '🔗 Copy Share Link (this config)'}
+                            </button>
+                            {shareLinkText && (
+                                <div className="info-text" style={{ wordBreak: 'break-all' }}>{shareLinkText}</div>
+                            )}
                         </div>
                     </div>
                 );
@@ -1714,6 +1954,45 @@
                             </div>
 
                             <div className="info-text">Change these any time from the game-over screen.</div>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (awaitingHandoff) {
+                return (
+                    <div className="game-container">
+                        <div className="main-col">
+                            <div className="header">
+                                <div className="header-col"><b>🌐 TURN COMPLETE</b></div>
+                            </div>
+
+                            <div className="objective">
+                                Send this link to your opponent so they can take their turn.<br />
+                                Playing on the same device? Hit Continue Here instead.
+                            </div>
+
+                            <button
+                                className="control-btn confirm"
+                                style={{ width: '100%', padding: '14px' }}
+                                onClick={copyHandoffLink}
+                            >
+                                {handoffLinkCopied ? '✓ Link copied!' : '🔗 Copy Link for Opponent'}
+                            </button>
+                            <div className="info-text" style={{ wordBreak: 'break-all' }}>{handoffLink}</div>
+
+                            <button
+                                className="control-btn"
+                                style={{ width: '100%' }}
+                                onClick={continueLocally}
+                            >
+                                ▶ Continue Here (same device)
+                            </button>
+
+                            <div className="log">
+                                <div className="log-title">Battle Log</div>
+                                {gameLog.map((line, i) => <div key={i} className="log-line">{line}</div>)}
+                            </div>
                         </div>
                     </div>
                 );
