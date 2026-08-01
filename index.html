@@ -388,10 +388,11 @@
         };
 
         // Tiles a tile can move to, given its tribe's movement rules. Bee adds diagonals
-        // on top of the normal orthogonal set; everyone else just gets neighbors().
-        const movementTargets = (i, tribeKey) => {
+        // on top of the normal orthogonal set, but only when Extend Wings has been paid for
+        // this turn (armed) -- everyone else just gets neighbors() always.
+        const movementTargets = (i, tribeKey, armed) => {
             const profile = TRIBE_CONFIGS[tribeKey];
-            return (profile && profile.diagonalMovement) ? [...neighbors(i), ...diagonalNeighbors(i)] : neighbors(i);
+            return (profile && profile.dumpType === 'diagonal' && armed) ? [...neighbors(i), ...diagonalNeighbors(i)] : neighbors(i);
         };
 
         // Preset library of tribe profiles, built around a 3-axis spectrum:
@@ -413,14 +414,14 @@
             BEE: {
                 emoji: '🐝', style: 'wide', power: 'offense', speed: 'slow',
                 spawnEvery: 2, spawnPower: 2,
-                diagonalMovement: true,
-                mechanic: 'Diagonal Movement -- moves and attacks diagonally too',
+                dumpType: 'diagonal', dumpLabel: 'Extend Wings', dumpCost: 2,
+                mechanic: 'Extend Wings -- pay eggs to move/attack diagonally this turn',
             },
             BEETLE: {
                 emoji: '🪲', style: 'tall', power: 'offense', speed: 'slow',
                 spawnEvery: 2, spawnPower: 2,
-                cleaveAttack: true,
-                mechanic: 'Cleave -- every attack also splashes adjacent enemy tiles for bonus damage',
+                dumpType: 'cleave', dumpLabel: 'Arm Cleave', dumpCost: 2,
+                mechanic: 'Arm Cleave -- pay eggs to splash adjacent enemy tiles on your next attack',
             },
             SPIDER: {
                 emoji: '🕷️', style: 'tall', power: 'defense', speed: 'fast',
@@ -470,6 +471,8 @@
             jump: 'Wing Jump: costs 3 eggs. Flies a unit stack over one adjacent tile to land two tiles away, skipping the middle tile entirely.',
             fortify: 'Turtle Up: costs 3 eggs. Instantly fortifies one of your tiles (+1 defense) without needing a Soldier card.',
             web: 'Web Trap: costs 3 eggs. Immobilizes an adjacent enemy tile -- it can\'t move or attack until their next turn starts.',
+            cleave: 'Arm Cleave: costs 2 eggs. Your next attack this turn also splashes every other enemy tile adjacent to the target for 2 damage.',
+            diagonal: 'Extend Wings: costs 2 eggs. Your move this turn can go diagonally as well as orthogonally.',
         };
 
         const TRAIT_ICON = { fortified: '🛡', warlord: '★' };
@@ -598,6 +601,7 @@
             const [mustDiscard, setMustDiscard] = useState(false);
             const [cardPlayedThisTurn, setCardPlayedThisTurn] = useState(false);
             const [summonedTileThisTurn, setSummonedTileThisTurn] = useState(null);
+            const [abilityArmed, setAbilityArmed] = useState(false); // Bee's Extend Wings / Beetle's Arm Cleave, spent by your next move this turn
             const [bonusCapNextTurn, setBonusCapNextTurn] = useState(0);
             const [resourceCap, setResourceCap] = useState(capForTurn(1));
             const [resources, setResources] = useState(capForTurn(1));
@@ -700,6 +704,8 @@
                 setSelectedCard(null);
             }, [hand, map, resources, cardPlayAvailable, settings.summoningSickness, addLog, pushHistory]);
 
+            const playerProfile = TRIBE_CONFIGS[playerTribeKey];
+
             // ---- Player move / attack / split (accounts for fortified defense + warlord aura) ----
             const resolveMove = useCallback((sourceIdx, targetIdx) => {
                 if (!moveAvailable) { addLog('> Already moved this turn!'); setMoveSource(null); return; }
@@ -733,7 +739,7 @@
                             newMap[targetIdx] = { ...target, tribe: TRIBES.ANT, units: effSend - effDefense, trait: null };
                             newMap[sourceIdx] = { ...source, units: 0, trait: null };
                             let cleaveMsg = '';
-                            if (playerProfile.cleaveAttack) {
+                            if (playerProfile.dumpType === 'cleave' && abilityArmed) {
                                 const splashed = applyCleave(newMap, targetIdx, 'ANT');
                                 if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} nearby tile${splashed > 1 ? 's' : ''}!`;
                             }
@@ -751,9 +757,8 @@
 
                 setMoveAvailable(false);
                 setMoveSource(null);
-            }, [map, moveAvailable, settings.nestGarrison, addLog, pushHistory]);
-
-            const playerProfile = TRIBE_CONFIGS[playerTribeKey];
+                setAbilityArmed(false); // Extend Wings / Arm Cleave are consumed by this move, used or not
+            }, [map, moveAvailable, settings.nestGarrison, playerProfile, abilityArmed, addLog, pushHistory]);
 
             // ---- Resource dump: spend leftover resources on a tribe-specific bonus ----
             const startDump = useCallback(() => {
@@ -793,8 +798,26 @@
                     setMoveSource(null);
                     setDumpMode('web-target');
                     addLog('> Web Trap: tap an adjacent enemy tile to immobilize.');
+                    return;
                 }
-            }, [phase, gameOver, resources, playerProfile, nestIndices, addLog, pushHistory]);
+                if (playerProfile.dumpType === 'cleave') {
+                    if (resources < playerProfile.dumpCost) { addLog(`> Need ${playerProfile.dumpCost} eggs for Arm Cleave.`); return; }
+                    if (abilityArmed) { addLog('> Cleave is already armed for this turn.'); return; }
+                    pushHistory();
+                    setResources(r => r - playerProfile.dumpCost);
+                    setAbilityArmed(true);
+                    addLog('> 🪲 Cleave armed! Your next attack this turn splashes adjacent enemies.');
+                    return;
+                }
+                if (playerProfile.dumpType === 'diagonal') {
+                    if (resources < playerProfile.dumpCost) { addLog(`> Need ${playerProfile.dumpCost} eggs for Extend Wings.`); return; }
+                    if (abilityArmed) { addLog('> Wings are already extended for this turn.'); return; }
+                    pushHistory();
+                    setResources(r => r - playerProfile.dumpCost);
+                    setAbilityArmed(true);
+                    addLog('> 🐝 Wings extended! You can move diagonally this turn.');
+                }
+            }, [phase, gameOver, resources, playerProfile, nestIndices, abilityArmed, addLog, pushHistory]);
 
             const resolveJump = useCallback((sourceIdx, targetIdx) => {
                 pushHistory();
@@ -956,13 +979,13 @@
                     return;
                 }
 
-                if (!movementTargets(moveSource, playerTribeKey).includes(tileIdx)) {
+                if (!movementTargets(moveSource, playerTribeKey, abilityArmed).includes(tileIdx)) {
                     addLog('> That tile is not reachable.');
                     return;
                 }
 
                 resolveMove(moveSource, tileIdx);
-            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, settings.summoningSickness, summonedTileThisTurn, playerTribeKey, playCard, resolveMove, resolveJump, resolveFortify, resolveWeb, addLog]);
+            }, [phase, gameOver, mustDiscard, dumpMode, dumpSource, selectedCard, moveSource, moveAvailable, map, settings.summoningSickness, summonedTileThisTurn, playerTribeKey, abilityArmed, playCard, resolveMove, resolveJump, resolveFortify, resolveWeb, addLog]);
 
             // ---- Turn management ----
             const startPlayerTurn = useCallback((currentMap, turnNumber, capBonus) => {
@@ -988,6 +1011,7 @@
                 setMoveAvailable(true);
                 setCardPlayedThisTurn(false);
                 setSummonedTileThisTurn(null);
+                setAbilityArmed(false);
                 setMustDiscard(false);
                 setHand(toppedHand);
                 setHistory([]); // undo only applies within the turn just starting
@@ -1108,7 +1132,8 @@
                             workMap[atk.targetIdx] = { ...workMap[atk.targetIdx], tribe: TRIBES.RIVAL, units: Math.max(atk.power - atk.effDefense, 1), trait: null };
                             workMap[atk.attackerIdx] = { ...workMap[atk.attackerIdx], units: 0, trait: null };
                             let cleaveMsg = '';
-                            if (rivalProfile.cleaveAttack) {
+                            if (rivalProfile.dumpType === 'cleave' && wResources >= rivalProfile.dumpCost) {
+                                wResources -= rivalProfile.dumpCost;
                                 const splashed = applyCleave(workMap, atk.targetIdx, 'RIVAL');
                                 if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
                             }
@@ -1127,7 +1152,8 @@
                                 workMap[target] = { ...workMap[target], tribe: TRIBES.RIVAL, units: Math.max(send - effDefense, 1), trait: null };
                                 workMap[i] = { ...t, units: 0, trait: null };
                                 let cleaveMsg = '';
-                                if (rivalProfile.cleaveAttack) {
+                                if (rivalProfile.dumpType === 'cleave' && wResources >= rivalProfile.dumpCost) {
+                                    wResources -= rivalProfile.dumpCost;
                                     const splashed = applyCleave(workMap, target, 'RIVAL');
                                     if (splashed > 0) cleaveMsg = ` Cleave splashed ${splashed} of your tiles!`;
                                 }
@@ -1284,6 +1310,7 @@
                 setDumpMode(null);
                 setDumpSource(null);
                 setSummonedTileThisTurn(null);
+                setAbilityArmed(false);
                 setMustDiscard(false);
                 setCardPlayAvailable(true);
                 setMoveAvailable(false); // first player doesn't get a move on turn 1
@@ -1324,10 +1351,10 @@
                         if (t.tribe.name === 'ANT') set.add(i);
                     });
                 } else if (moveSource !== null) {
-                    movementTargets(moveSource, playerTribeKey).forEach(n => set.add(n));
+                    movementTargets(moveSource, playerTribeKey, abilityArmed).forEach(n => set.add(n));
                 }
                 return set;
-            }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource, playerTribeKey]);
+            }, [selectedCard, moveSource, map, mustDiscard, dumpMode, dumpSource, playerTribeKey, abilityArmed]);
 
             if (screen === 'menu') {
                 return (
@@ -1531,6 +1558,7 @@
                         <div className="header-col" style={{ textAlign: 'right' }}>
                             EGGS <b>{resources}</b>/{resourceCap} 🥚<br />
                             CARD {cardPlayAvailable ? '✓' : '✗'} ⋅ MOVE {moveAvailable ? '✓' : '✗'}
+                            {abilityArmed && <span style={{ color: '#FFD700' }}> ⋅ ⚡ARMED</span>}
                         </div>
                     </div>
 
