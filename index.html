@@ -574,6 +574,7 @@
                 pc: payload.pendingCapture,
                 log: payload.logTail,
                 fl: payload.boardFlipped ? 1 : 0,
+                rs: payload.roundStep || 0,
             });
             const b64 = btoa(unescape(encodeURIComponent(json)));
             return `${window.location.origin}${window.location.pathname}?mp=${encodeURIComponent(b64)}`;
@@ -597,7 +598,7 @@
                 return {
                     map, turn: data.t, playerTribeKey: data.pt, rivalTribeKey: data.rt,
                     bonusForActiveSide: data.b, bonusForInactiveSide: data.rb,
-                    settings: data.s, nestIndices: data.ni, pendingCapture: data.pc, logTail: data.log || [], boardFlipped: !!data.fl,
+                    settings: data.s, nestIndices: data.ni, pendingCapture: data.pc, logTail: data.log || [], boardFlipped: !!data.fl, roundStep: data.rs || 0,
                 };
             } catch (err) {
                 return null; // malformed/corrupted link -- fall back to the normal menu
@@ -878,6 +879,11 @@
             const [handoffLink, setHandoffLink] = useState('');
             const [handoffLinkCopied, setHandoffLinkCopied] = useState(false);
             const [boardFlipped, setBoardFlipped] = useState(multiplayerLinkOnLoad ? !!multiplayerLinkOnLoad.boardFlipped : false);
+            // ABBA turn order for async play: 0 = about to act as this round's first
+            // mover (a handoff follows), 1 = about to act as second mover (round
+            // completes and the SAME person continues locally as next round's first
+            // mover, no handoff needed -- this is what produces the A/B/B/A pattern).
+            const [roundStep, setRoundStep] = useState(multiplayerLinkOnLoad ? (multiplayerLinkOnLoad.roundStep || 0) : 0);
             const [shareLinkText, setShareLinkText] = useState('');
             const [playerGoesSecondThisRound, setPlayerGoesSecondThisRound] = useState(false);
 
@@ -1484,8 +1490,27 @@
                     addLog(`> 🐛 Banked ${resources} eggs for your next turn.`);
                 }
 
+                const useAbba = settings.alternatingFirstPlayer;
+                const wasSecondMover = useAbba && roundStep === 1;
+
+                if (wasSecondMover) {
+                    // Round complete, and per ABBA this SAME person goes first next round
+                    // too -- no handoff, no perspective swap, just keep playing.
+                    const nextTurn = turn + 1;
+                    setBonusCapNextTurn(carryBonus);
+                    setRoundStep(0);
+                    setTurn(nextTurn);
+                    addLog('> ⚡ You get another turn (ABBA order)!');
+                    startPlayerTurn(mapRef.current, nextTurn, carryBonus);
+                    return;
+                }
+
+                // First mover (or ABBA disabled, strict alternation): swap perspective
+                // and hand off for real. If ABBA is on, the round ISN'T over yet -- the
+                // turn number stays the same, and the recipient is flagged as this
+                // round's second mover so they know to continue afterward, not hand back.
                 const swappedMap = swapMapPerspective(mapRef.current);
-                const nextTurn = turn + 1;
+                const nextTurn = useAbba ? turn : turn + 1;
                 const newPlayerTribeKey = rivalTribeKey;   // whoever was Rival is now the active, ANT-labeled side
                 const newRivalTribeKey = playerTribeKey;
                 const newActiveBonus = rivalBonusCapNextTurn; // the other side's stored bonus is now theirs to use
@@ -1500,6 +1525,7 @@
                 // moment they become the active side.
                 const swappedNestIndices = { ant: nestIndices.rival, rival: nestIndices.ant };
                 const newBoardFlipped = !boardFlipped; // so each real player's own nest stays at the bottom of their screen
+                const newRoundStep = useAbba ? 1 : 0; // recipient is this round's second mover, if ABBA is on
 
                 const link = encodeMultiplayerLink({
                     map: swappedMap,
@@ -1513,6 +1539,7 @@
                     pendingCapture: swappedPending,
                     logTail: gameLog.slice(-4),
                     boardFlipped: newBoardFlipped,
+                    roundStep: newRoundStep,
                 });
 
                 setMap(swappedMap);
@@ -1523,11 +1550,12 @@
                 setRivalBonusCapNextTurn(newInactiveBonus);
                 setPendingCapture(swappedPending);
                 setTurn(nextTurn);
+                setRoundStep(newRoundStep);
                 setHandoffLink(link);
                 setHandoffLinkCopied(false);
                 setAwaitingHandoff(true);
                 setPhase('enemy_turn'); // locks the board from further input until handoff completes
-            }, [bonusCapNextTurn, settings, workerPlayedThisTurn, resources, turn, rivalTribeKey, playerTribeKey, rivalBonusCapNextTurn, pendingCapture, nestIndices, boardFlipped, gameLog, addLog]);
+            }, [bonusCapNextTurn, settings, workerPlayedThisTurn, resources, turn, roundStep, rivalTribeKey, playerTribeKey, rivalBonusCapNextTurn, pendingCapture, nestIndices, boardFlipped, gameLog, addLog, startPlayerTurn]);
 
             const finishTurn = useCallback(() => {
                 if (asyncMode) endTurnAsync(); else endPlayerTurn();
@@ -1657,6 +1685,7 @@
                 setHandoffLink('');
                 setHandoffLinkCopied(false);
                 setBoardFlipped(false);
+                setRoundStep(0);
             };
 
             const copyShareLink = async () => {
