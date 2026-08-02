@@ -573,6 +573,7 @@
                 ni: payload.nestIndices,
                 pc: payload.pendingCapture,
                 log: payload.logTail,
+                fl: payload.boardFlipped ? 1 : 0,
             });
             const b64 = btoa(unescape(encodeURIComponent(json)));
             return `${window.location.origin}${window.location.pathname}?mp=${encodeURIComponent(b64)}`;
@@ -596,7 +597,7 @@
                 return {
                     map, turn: data.t, playerTribeKey: data.pt, rivalTribeKey: data.rt,
                     bonusForActiveSide: data.b, bonusForInactiveSide: data.rb,
-                    settings: data.s, nestIndices: data.ni, pendingCapture: data.pc, logTail: data.log || [],
+                    settings: data.s, nestIndices: data.ni, pendingCapture: data.pc, logTail: data.log || [], boardFlipped: !!data.fl,
                 };
             } catch (err) {
                 return null; // malformed/corrupted link -- fall back to the normal menu
@@ -876,6 +877,7 @@
             const [awaitingHandoff, setAwaitingHandoff] = useState(false);
             const [handoffLink, setHandoffLink] = useState('');
             const [handoffLinkCopied, setHandoffLinkCopied] = useState(false);
+            const [boardFlipped, setBoardFlipped] = useState(multiplayerLinkOnLoad ? !!multiplayerLinkOnLoad.boardFlipped : false);
             const [shareLinkText, setShareLinkText] = useState('');
             const [playerGoesSecondThisRound, setPlayerGoesSecondThisRound] = useState(false);
 
@@ -1491,6 +1493,13 @@
                 const swappedPending = pendingCapture
                     ? { ...pendingCapture, winner: pendingCapture.winner === 'ANT' ? 'RIVAL' : 'ANT' }
                     : null;
+                // nestIndices.ant/rival must swap too -- they track "which board position
+                // belongs to whichever tribe is currently labeled ANT/RIVAL", not a fixed
+                // position. Without this, the win-check misreads every handoff as a capture,
+                // since a player's own (unchanged) home nest gets relabeled to ANT the
+                // moment they become the active side.
+                const swappedNestIndices = { ant: nestIndices.rival, rival: nestIndices.ant };
+                const newBoardFlipped = !boardFlipped; // so each real player's own nest stays at the bottom of their screen
 
                 const link = encodeMultiplayerLink({
                     map: swappedMap,
@@ -1500,11 +1509,15 @@
                     bonusForActiveSide: newActiveBonus,
                     bonusForInactiveSide: newInactiveBonus,
                     settings,
-                    nestIndices,
+                    nestIndices: swappedNestIndices,
                     pendingCapture: swappedPending,
                     logTail: gameLog.slice(-4),
+                    boardFlipped: newBoardFlipped,
                 });
 
+                setMap(swappedMap);
+                setNestIndices(swappedNestIndices);
+                setBoardFlipped(newBoardFlipped);
                 setPlayerTribeKey(newPlayerTribeKey);
                 setRivalTribeKey(newRivalTribeKey);
                 setRivalBonusCapNextTurn(newInactiveBonus);
@@ -1514,7 +1527,7 @@
                 setHandoffLinkCopied(false);
                 setAwaitingHandoff(true);
                 setPhase('enemy_turn'); // locks the board from further input until handoff completes
-            }, [bonusCapNextTurn, settings, workerPlayedThisTurn, resources, turn, rivalTribeKey, playerTribeKey, rivalBonusCapNextTurn, pendingCapture, nestIndices, gameLog, addLog]);
+            }, [bonusCapNextTurn, settings, workerPlayedThisTurn, resources, turn, rivalTribeKey, playerTribeKey, rivalBonusCapNextTurn, pendingCapture, nestIndices, boardFlipped, gameLog, addLog]);
 
             const finishTurn = useCallback(() => {
                 if (asyncMode) endTurnAsync(); else endPlayerTurn();
@@ -1643,6 +1656,7 @@
                 setAwaitingHandoff(false);
                 setHandoffLink('');
                 setHandoffLinkCopied(false);
+                setBoardFlipped(false);
             };
 
             const copyShareLink = async () => {
@@ -1674,6 +1688,10 @@
             };
 
             const lastLogLine = gameLog[gameLog.length - 1] || '';
+
+            const displayRows = boardFlipped
+                ? [...ROW_LAYOUT].reverse().map(row => [...row].reverse())
+                : ROW_LAYOUT;
 
             const highlightSet = React.useMemo(() => {
                 const set = new Set();
@@ -1988,6 +2006,13 @@
                             >
                                 ▶ Continue Here (same device)
                             </button>
+                            <button
+                                className="control-btn"
+                                style={{ width: '100%' }}
+                                onClick={() => setScreen('menu')}
+                            >
+                                🏠 Main Menu
+                            </button>
 
                             <div className="log">
                                 <div className="log-title">Battle Log</div>
@@ -2003,6 +2028,15 @@
                     <div className="main-col">
                     <div className="header">
                         <div className="header-col">
+                            <button
+                                className="control-btn"
+                                style={{ fontSize: '8px', padding: '3px 6px', marginBottom: '3px' }}
+                                onClick={() => {
+                                    if (window.confirm('Leave this game and return to the main menu?')) setScreen('menu');
+                                }}
+                            >
+                                🏠 Menu
+                            </button><br />
                             TURN <b>{turn}</b><br />
                             {phase === 'enemy_turn' ? 'RIVAL TURN' : 'YOUR TURN'}
                         </div>
@@ -2039,7 +2073,7 @@
                     </div>
 
                     <div className="board">
-                        {ROW_LAYOUT.map((row, rowIdx) => (
+                        {displayRows.map((row, rowIdx) => (
                             <div className="board-row" key={rowIdx}>
                                 {row.map(idx => {
                                     const territory = map[idx];
